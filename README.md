@@ -78,6 +78,39 @@ Kanjii's sentence library is built on real Japanese content — social media pos
 
 - React Native with Expo
 - Supabase — authentication, database, user progress
+- Claude AI — conversational learning assistance
 - Google OAuth
 - expo-speech for text-to-speech
 - Dark UI throughout — #0A0A0A background, #E85D3A orange accent
+
+---
+
+## Setup
+
+1. Clone the repository
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+3. Configure environment variables (create `.env` file):
+   ```
+   SUPABASE_URL=your_supabase_url
+   SUPABASE_ANON_KEY=your_supabase_anon_key
+   CLAUDE_API_KEY=your_claude_api_key
+   ```
+
+4. Run the app:
+   ```bash
+   npx expo start
+   ```
+
+5. Use the Expo Go app on your device or run on a simulator
+
+---
+
+## Database Setup
+
+The Supabase schema and starter data are available in the `supabase/` directory:
+- `schema.sql` — database structure
+- `tokyo-starter-pack.sql` — initial sentence collection
