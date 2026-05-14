@@ -123,7 +123,10 @@ export default function SummaryScreen({ navigation, route, user }) {
 
         <TouchableOpacity
           style={styles.secondaryButton}
-          onPress={() => navigation.navigate('Home')}
+          onPress={() => navigation.reset({
+            index: 0,
+            routes: [{ name: 'Home' }],
+          })}
           activeOpacity={0.7}
         >
           <Text style={styles.secondaryButtonText}>Home</Text>

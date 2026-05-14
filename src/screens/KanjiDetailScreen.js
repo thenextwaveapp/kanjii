@@ -9,10 +9,10 @@ import {
   SafeAreaView,
   Modal,
 } from 'react-native';
-import { toRomaji } from 'wanakana';
+import { toRomaji, toHiragana } from 'wanakana';
 import { fetchKanjiDetail } from '../services/progress';
 import StrokeOrder from '../components/StrokeOrder';
-import { speakJapanese } from '../services/tts';
+import { speakJapanese, stopSpeaking } from '../services/tts';
 import { useSettings } from '../contexts/SettingsContext';
 import { VOICE_OPTIONS } from '../services/settings';
 
@@ -23,6 +23,7 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
   const [loading, setLoading] = useState(true);
   const [showStrokeOrder, setShowStrokeOrder] = useState(false);
   const [playingReading, setPlayingReading] = useState(null);
+  const [currentSound, setCurrentSound] = useState(null);
 
   useEffect(() => {
     if (!user?.id) { setLoading(false); return; }
@@ -34,6 +35,7 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
 
   const kd = data?.kanjiData;
   const sentences = data?.sentences || [];
+  const exampleSentences = data?.exampleSentences || [];
 
   const drillThis = () => {
     navigation.navigate('Practice', {
@@ -54,18 +56,84 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
   };
 
   const handleReadingLongPress = async (reading) => {
-    if (playingReading) return;
+    // Stop current sound if playing
+    if (currentSound) {
+      await stopSpeaking(currentSound);
+      setCurrentSound(null);
+      setPlayingReading(null);
+    }
+
     try {
       setPlayingReading(reading);
       const voiceConfig = VOICE_OPTIONS.find(v => v.value === settings.voiceGender);
-      await speakJapanese(reading, {
+      const sound = await speakJapanese(reading, {
         voice: voiceConfig?.voice,
         rate: settings.speechRate,
       });
+
+      setCurrentSound(sound);
+
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (status.didJustFinish) {
+          setPlayingReading(null);
+          setCurrentSound(null);
+        }
+      });
     } catch (error) {
       console.error('TTS error:', error);
-    } finally {
-      setTimeout(() => setPlayingReading(null), 1500);
+      setPlayingReading(null);
+      setCurrentSound(null);
+    }
+  };
+
+  const handleMainReadingsPress = async () => {
+    if (!kd?.dictReadings || kd.dictReadings.length === 0) return;
+
+    // Stop current sound if playing
+    if (currentSound) {
+      await stopSpeaking(currentSound);
+      setCurrentSound(null);
+      setPlayingReading(null);
+    }
+
+    try {
+      const voiceConfig = VOICE_OPTIONS.find(v => v.value === settings.voiceGender);
+
+      // Play all readings in sequence
+      for (let i = 0; i < Math.min(4, kd.dictReadings.length); i++) {
+        const reading = kd.dictReadings[i];
+        const hiraganaReading = toHiragana(reading);
+
+        setPlayingReading(hiraganaReading);
+
+        const sound = await speakJapanese(hiraganaReading, {
+          voice: voiceConfig?.voice,
+          rate: settings.speechRate,
+        });
+
+        setCurrentSound(sound);
+
+        // Wait for sound to finish
+        await new Promise((resolve) => {
+          sound.setOnPlaybackStatusUpdate((status) => {
+            if (status.didJustFinish) {
+              resolve();
+            }
+          });
+        });
+
+        // Small pause between readings
+        if (i < Math.min(4, kd.dictReadings.length) - 1) {
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
+      }
+
+      setPlayingReading(null);
+      setCurrentSound(null);
+    } catch (error) {
+      console.error('TTS error:', error);
+      setPlayingReading(null);
+      setCurrentSound(null);
     }
   };
 
@@ -82,11 +150,12 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
         <View style={styles.center}><ActivityIndicator color="#E85D3A" size="large" /></View>
       ) : (
         <ScrollView contentContainerStyle={styles.content}>
-          {/* Big character */}
+          {/* Big character with readings flowing to the right and wrapping */}
           <View style={styles.heroBox}>
-            <View style={styles.heroTop}>
+            {/* Kanji + badges */}
+            <View style={styles.kanjiColumn}>
               <Text style={styles.heroChar}>{kanji}</Text>
-              <View style={styles.heroMeta}>
+              <View style={styles.badgesRow}>
                 {kd?.jlpt_level && kd.jlpt_level !== 'unknown' && (
                   <View style={styles.jlptBadge}>
                     <Text style={styles.jlptText}>{kd.jlpt_level}</Text>
@@ -102,30 +171,54 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
               </View>
             </View>
 
-            {/* Readings with meanings */}
-            {kd && (
-              <View style={styles.readingsContainer}>
-                {(kd.readings || []).map((r, i) => (
-                  <TouchableOpacity
-                    key={r}
-                    style={[
-                      styles.readingChip,
-                      playingReading === r && styles.readingChipPlaying
-                    ]}
-                    onLongPress={() => handleReadingLongPress(r)}
-                    activeOpacity={0.7}
-                    delayLongPress={200}
-                  >
-                    <Text style={styles.readingChipText}>{r}</Text>
-                    <Text style={styles.readingChipRomaji}>{toRomaji(r)}</Text>
-                    {kd.meanings?.[i] && (
-                      <Text style={styles.readingChipMeaning}>{kd.meanings[i]}</Text>
-                    )}
-                    <Text style={styles.readingChipHint}>🔊</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
+            {/* Dictionary readings */}
+            {kd?.dictReadings && kd.dictReadings.length > 0 && kd.dictReadings.map((reading, i) => {
+              const hiraganaReading = toHiragana(reading);
+              return (
+                <TouchableOpacity
+                  key={`dict-${reading}-${i}`}
+                  style={[
+                    styles.readingChip,
+                    playingReading === hiraganaReading && styles.readingChipPlaying
+                  ]}
+                  onLongPress={() => handleReadingLongPress(hiraganaReading)}
+                  activeOpacity={0.7}
+                  delayLongPress={100}
+                >
+                  <Text style={styles.readingChipKanji}>{kanji}</Text>
+                  <Text style={styles.readingChipText}>{hiraganaReading}</Text>
+                  <Text style={styles.readingChipRomaji}>{toRomaji(hiraganaReading)}</Text>
+                  {kd.dictMeanings && kd.dictMeanings.length > 0 && (
+                    <Text style={styles.readingChipMeaning} numberOfLines={2}>
+                      {kd.dictMeanings.slice(0, 2).join(', ')}
+                    </Text>
+                  )}
+                  <Text style={styles.readingChipHint}>🔊</Text>
+                </TouchableOpacity>
+              );
+            })}
+
+            {/* Example words */}
+            {kd?.exampleWords && kd.exampleWords.length > 0 && kd.exampleWords.map((w, i) => (
+              <TouchableOpacity
+                key={`example-${w.word}-${i}`}
+                style={[
+                  styles.readingChip,
+                  playingReading === w.furigana && styles.readingChipPlaying
+                ]}
+                onLongPress={() => handleReadingLongPress(w.furigana)}
+                activeOpacity={0.7}
+                delayLongPress={100}
+              >
+                <Text style={styles.readingChipKanji}>{w.word}</Text>
+                <Text style={styles.readingChipText}>{w.furigana}</Text>
+                <Text style={styles.readingChipRomaji}>{toRomaji(w.furigana)}</Text>
+                {w.meaning && (
+                  <Text style={styles.readingChipMeaning}>{w.meaning}</Text>
+                )}
+                <Text style={styles.readingChipHint}>🔊</Text>
+              </TouchableOpacity>
+            ))}
           </View>
 
           {/* Stats */}
@@ -172,10 +265,33 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
             </View>
           )}
 
-          {sentences.length === 0 && kd && (
+          {/* Example Sentences */}
+          {exampleSentences.length > 0 && (
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>
+                Examples ({exampleSentences.length})
+              </Text>
+              {exampleSentences.map((s, i) => (
+                <TouchableOpacity
+                  key={s.id ?? i}
+                  style={styles.sentenceCard}
+                  onPress={() => practiceSentence(s)}
+                  activeOpacity={0.8}
+                >
+                  <SentenceWithHighlight sentence={s.japanese} target={kanji} words={s.words} />
+                  <EnglishWithHighlight english={s.english} words={s.words} target={kanji} />
+                  <View style={styles.sentenceFooter}>
+                    <Text style={styles.practiceHint}>Tap to practice →</Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {sentences.length === 0 && exampleSentences.length === 0 && kd && (
             <View style={styles.noSentences}>
               <Text style={styles.noSentencesText}>
-                No completed sentences with this kanji yet.
+                No sentences with this kanji found.
               </Text>
             </View>
           )}
@@ -358,22 +474,22 @@ const styles = StyleSheet.create({
   content: { padding: 24, paddingBottom: 60 },
   heroBox: {
     backgroundColor: '#111', borderRadius: 20, borderWidth: 1, borderColor: '#222',
-    marginBottom: 20, padding: 24, gap: 16,
-  },
-  heroTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  heroChar: { fontSize: 72, color: '#EFEFEF', lineHeight: 80 },
-  heroMeta: {
-    gap: 8,
-    alignItems: 'flex-end',
-  },
-  readingsContainer: {
+    marginBottom: 20, padding: 24,
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
+    alignItems: 'flex-start',
+  },
+  kanjiColumn: {
+    gap: 8,
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  heroChar: { fontSize: 72, color: '#EFEFEF', lineHeight: 80 },
+  badgesRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
   },
   readingChip: {
     backgroundColor: '#1A1A1A',
@@ -388,6 +504,12 @@ const styles = StyleSheet.create({
   readingChipPlaying: {
     backgroundColor: '#222',
     borderColor: '#E85D3A',
+  },
+  readingChipKanji: {
+    color: '#EFEFEF',
+    fontSize: 28,
+    fontWeight: '400',
+    marginBottom: 4,
   },
   readingChipText: {
     color: '#E85D3A',

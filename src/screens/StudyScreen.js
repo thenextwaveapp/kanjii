@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { fetchKanji, fetchUserSentences } from '../services/progress';
-import { toHiragana } from 'wanakana';
+import { toHiragana, toRomaji } from 'wanakana';
 import { supabase } from '../services/supabase';
 import {
   fetchSentenceLists,
@@ -20,9 +20,6 @@ import {
   addSentenceToList,
   removeSentenceFromList,
 } from '../services/sentenceLists';
-import { speakJapanese, stopSpeaking } from '../services/tts';
-import { useSettings } from '../contexts/SettingsContext';
-import { VOICE_OPTIONS } from '../services/settings';
 
 const KANJI_TABS = ['All', 'Needs work', 'Mastered'];
 const KANJI_RE = /[\u4E00-\u9FFF\u3400-\u4DBF]/g;
@@ -121,6 +118,11 @@ export default function StudyScreen({ navigation, user }) {
       const query = searchQuery.toLowerCase().trim();
       const hiraganaQuery = toHiragana(query);
 
+      console.log('=== SEARCH DEBUG ===');
+      console.log('Original query:', searchQuery);
+      console.log('Lowercase query:', query);
+      console.log('Hiragana query:', hiraganaQuery);
+
       if (mode === 'kanji') {
         // Search kanji_dictionary for matches
         // 1. Search in kanji character directly
@@ -135,22 +137,61 @@ export default function StudyScreen({ navigation, user }) {
           .rpc('search_kanji_meanings', { search_query: query })
           .limit(200);
 
-        // 3. Get all kanji and filter by exact reading match
-        const { data: allKanji } = await supabase
-          .from('kanji_dictionary')
-          .select('*')
-          .limit(1000);
+        // 3. Use RPC to search by reading (server-side filtering)
+        let readingMatches = [];
 
-        // Filter for exact reading matches (hiragana or romaji)
-        const readingMatches = (allKanji || []).filter(k => {
-          const hasExactHiraganaMatch = k.readings?.some(r =>
-            r.toLowerCase() === query || r.toLowerCase() === hiraganaQuery
-          );
-          const hasExactRomajiMatch = k.readings_romaji?.some(r =>
-            r.toLowerCase() === query
-          );
-          return hasExactHiraganaMatch || hasExactRomajiMatch;
-        });
+        try {
+          // Try to use RPC if available for reading search
+          const { data: rpcResults } = await supabase
+            .rpc('search_kanji_readings', { search_query: hiraganaQuery })
+            .limit(200);
+
+          if (rpcResults && rpcResults.length > 0) {
+            readingMatches = rpcResults;
+          }
+        } catch (rpcError) {
+          console.log('RPC search_kanji_readings not available, falling back to client-side filtering');
+
+          // Fallback: fetch all and filter client-side
+          const { data: allKanji } = await supabase
+            .from('kanji_dictionary')
+            .select('*');
+
+          console.log('Total kanji fetched:', allKanji?.length || 0);
+
+          readingMatches = (allKanji || []).filter(k => {
+            // Check hiragana readings
+            const hasHiraganaMatch = k.readings?.some(r => {
+              const reading = r.toLowerCase();
+              return reading === query ||
+                     reading === hiraganaQuery ||
+                     reading.includes(hiraganaQuery);
+            });
+
+            // Check romaji readings
+            const hasRomajiMatch = k.readings_romaji?.some(r => {
+              const reading = r.toLowerCase();
+              return reading === query || reading.includes(query);
+            });
+
+            // Check converted romaji
+            const hasConvertedRomajiMatch = k.readings?.some(r => {
+              const romaji = toRomaji(r).toLowerCase();
+              return romaji === query || romaji.includes(query);
+            });
+
+            return hasHiraganaMatch || hasRomajiMatch || hasConvertedRomajiMatch;
+          });
+        }
+
+        console.log('Reading matches found:', readingMatches.length);
+        if (readingMatches.length > 0) {
+          console.log('First few matches:', readingMatches.slice(0, 3).map(k => ({
+            kanji: k.kanji,
+            readings: k.readings,
+            readings_romaji: k.readings_romaji
+          })));
+        }
 
         // Combine and sort by relevance
         const seen = new Set();
@@ -486,62 +527,6 @@ export default function StudyScreen({ navigation, user }) {
 }
 
 function KanjiView({ kanjiList, filtered, activeTab, setActiveTab, weakKanji, onDrill, navigation }) {
-  const { settings } = useSettings();
-  const [playingKanji, setPlayingKanji] = React.useState(null);
-  const [currentSound, setCurrentSound] = React.useState(null);
-
-  const handleReadingsPress = async (kanji, readings, e) => {
-    e?.stopPropagation();
-
-    if (!readings || readings.length === 0) return;
-
-    // Stop current sound if playing
-    if (currentSound) {
-      await stopSpeaking(currentSound);
-      setCurrentSound(null);
-      setPlayingKanji(null);
-    }
-
-    try {
-      const voiceConfig = VOICE_OPTIONS.find(v => v.value === settings.voiceGender);
-      setPlayingKanji(kanji);
-
-      // Play first 3 readings in sequence
-      for (let i = 0; i < Math.min(3, readings.length); i++) {
-        const reading = readings[i];
-        const hiraganaReading = toHiragana(reading);
-
-        const sound = await speakJapanese(hiraganaReading, {
-          voice: voiceConfig?.voice,
-          rate: settings.speechRate,
-        });
-
-        setCurrentSound(sound);
-
-        // Wait for sound to finish
-        await new Promise((resolve) => {
-          sound.setOnPlaybackStatusUpdate((status) => {
-            if (status.didJustFinish) {
-              resolve();
-            }
-          });
-        });
-
-        // Small pause between readings
-        if (i < Math.min(3, readings.length) - 1) {
-          await new Promise(resolve => setTimeout(resolve, 300));
-        }
-      }
-
-      setPlayingKanji(null);
-      setCurrentSound(null);
-    } catch (error) {
-      console.error('TTS error:', error);
-      setPlayingKanji(null);
-      setCurrentSound(null);
-    }
-  };
-
   return (
     <>
       {/* Sub-tabs */}
@@ -590,26 +575,16 @@ function KanjiView({ kanjiList, filtered, activeTab, setActiveTab, weakKanji, on
                 <View style={styles.kanjiCardLeft}>
                   <Text style={styles.kanjiChar}>{k.kanji}</Text>
                   {k.dictReadings && k.dictReadings.length > 0 && (
-                    <TouchableOpacity
-                      style={styles.cardReadingsContainer}
-                      onPress={(e) => handleReadingsPress(k.kanji, k.dictReadings, e)}
-                      activeOpacity={0.7}
-                    >
-                      <View style={styles.cardReadingsRow}>
-                        <Text style={[
-                          styles.cardReadings,
-                          playingKanji === k.kanji && styles.cardReadingsPlaying
-                        ]}>
-                          {k.dictReadings.slice(0, 3).map(r => toHiragana(r)).join('・')}
-                        </Text>
-                        <Text style={styles.cardSpeakerIcon}>🔊</Text>
-                      </View>
+                    <View style={styles.cardReadingsContainer}>
+                      <Text style={styles.cardReadings}>
+                        {k.dictReadings.slice(0, 3).map(r => toHiragana(r)).join('・')}
+                      </Text>
                       {k.dictMeanings && k.dictMeanings.length > 0 && (
                         <Text style={styles.cardMeanings}>
                           {k.dictMeanings.slice(0, 2).join(', ')}
                         </Text>
                       )}
-                    </TouchableOpacity>
+                    </View>
                   )}
                 </View>
                 <View style={styles.kanjiCardRight}>
