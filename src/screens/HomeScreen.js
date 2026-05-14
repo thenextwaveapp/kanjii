@@ -82,6 +82,16 @@ export default function HomeScreen({ navigation, user }) {
           <Text style={styles.secondaryCardTitle}>Study</Text>
           <Text style={styles.secondaryCardSub}>Review your kanji collection</Text>
         </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.secondaryCard}
+          onPress={() => navigation.navigate('Learn')}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.secondaryCardIcon}>📚</Text>
+          <Text style={styles.secondaryCardTitle}>Basics</Text>
+          <Text style={styles.secondaryCardSub}>Learn hiragana, katakana & how Japanese works</Text>
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );

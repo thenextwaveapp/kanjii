@@ -172,7 +172,7 @@ export default function TypingInput({ target, onMatch, onAttempt, onFocus }) {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.label}>Type the snippet</Text>
+      <Text style={styles.label}>Type or use keyboard voice input</Text>
       <TouchableOpacity
         activeOpacity={1}
         onPress={() => inputRef.current?.focus()}
@@ -222,8 +222,7 @@ export default function TypingInput({ target, onMatch, onAttempt, onFocus }) {
                 },
               ]}
             >
-              <Text style={styles.hanamaru}>🌸</Text>
-              <Text style={styles.hanamaruCircle}>◎</Text>
+              <Text style={styles.hanamaru}>💮</Text>
             </Animated.View>
           )}
         </Animated.View>

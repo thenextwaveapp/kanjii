@@ -36,7 +36,22 @@ export default function SnippetCard({ snippet }) {
 
   if (!snippet) return null;
 
-  const { japanese, english, words } = snippet;
+  const { japanese, english, words, best_grade, practice_count, last_practiced_at } = snippet;
+
+  // Format last practiced time
+  const formatLastPracticed = (timestamp) => {
+    if (!timestamp) return null;
+    const now = new Date();
+    const practiced = new Date(timestamp);
+    const diffMs = now - practiced;
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) return 'today';
+    if (diffDays === 1) return 'yesterday';
+    if (diffDays < 7) return `${diffDays}d ago`;
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
+    return `${Math.floor(diffDays / 30)}mo ago`;
+  };
 
   const speak = async () => {
     if (speaking && currentSound) {
@@ -103,6 +118,20 @@ export default function SnippetCard({ snippet }) {
 
   return (
     <View style={styles.card}>
+      {/* Practice Stats */}
+      {best_grade && practice_count && (
+        <View style={styles.statsHeader}>
+          <Text style={styles.statsText}>
+            {best_grade} {practice_count}x
+          </Text>
+          {last_practiced_at && (
+            <Text style={styles.lastPracticedText}>
+              {formatLastPracticed(last_practiced_at)}
+            </Text>
+          )}
+        </View>
+      )}
+
       {/* Japanese text with tappable words */}
       <View style={styles.japaneseContainer}>
         {segments.map((seg, i) => {
@@ -227,6 +256,26 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#222222',
     width: '100%',
+  },
+  statsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1A1A1A',
+  },
+  statsText: {
+    fontSize: 13,
+    color: '#E85D3A',
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  },
+  lastPracticedText: {
+    fontSize: 11,
+    color: '#666',
+    fontStyle: 'italic',
   },
   japaneseContainer: {
     flexDirection: 'row',

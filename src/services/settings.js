@@ -38,8 +38,8 @@ export const TEXT_SCALE_OPTIONS = [
 
 export const VOICE_OPTIONS = [
   { label: 'Female (Natural)', value: 'female', voice: 'ja-JP-Neural2-B' },
-  { label: 'Male (Deep)', value: 'male', voice: 'ja-JP-Neural2-C' },
-  { label: 'Female (Clear)', value: 'female-alt', voice: 'ja-JP-Neural2-D' },
+  { label: 'Male (Natural)', value: 'male', voice: 'ja-JP-Neural2-C' },
+  { label: 'Male (Deep)', value: 'male-deep', voice: 'ja-JP-Neural2-D' },
 ];
 
 export const SPEECH_RATE_OPTIONS = [

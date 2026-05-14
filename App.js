@@ -14,10 +14,11 @@ import SummaryScreen from './src/screens/SummaryScreen';
 import StudyScreen from './src/screens/StudyScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import KanjiDetailScreen from './src/screens/KanjiDetailScreen';
+import LearnScreen from './src/screens/LearnScreen';
 
 const Stack = createNativeStackNavigator();
 
-const mockUser = { id: 'dev-user', email: 'dev@test.com' };
+const Auth = { id: 'dev-user', email: 'dev@test.com' };
 
 export default function App() {
 
@@ -29,30 +30,38 @@ export default function App() {
           screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#0A0A0A' } }}
         >
           <Stack.Screen name="Home">
-            {(props) => <HomeScreen {...props} user={mockUser} />}
+            {(props) => <HomeScreen {...props} user={Auth} />}
           </Stack.Screen>
           <Stack.Screen name="ModeSelect" component={ModeSelectScreen} />
           <Stack.Screen name="RoundSelect" component={RoundSelectScreen} />
           <Stack.Screen name="CollectionList">
-            {(props) => <CollectionListScreen {...props} user={mockUser} />}
+            {(props) => <CollectionListScreen {...props} user={Auth} />}
           </Stack.Screen>
           <Stack.Screen name="LessonList">
-            {(props) => <LessonListScreen {...props} user={mockUser} />}
+            {(props) => <LessonListScreen {...props} user={Auth} />}
           </Stack.Screen>
           <Stack.Screen name="Practice">
-            {(props) => <PracticeScreen {...props} user={mockUser} />}
+            {(props) => <PracticeScreen {...props} user={Auth} />}
           </Stack.Screen>
           <Stack.Screen name="Summary">
-            {(props) => <SummaryScreen {...props} user={mockUser} />}
+            {(props) => <SummaryScreen {...props} user={Auth} />}
           </Stack.Screen>
           <Stack.Screen name="Study">
-            {(props) => <StudyScreen {...props} user={mockUser} />}
+            {(props) => <StudyScreen {...props} user={Auth} />}
           </Stack.Screen>
           <Stack.Screen name="Settings">
-            {(props) => <SettingsScreen {...props} user={mockUser} />}
+            {(props) => <SettingsScreen {...props} user={Auth} />}
           </Stack.Screen>
-          <Stack.Screen name="KanjiDetail">
-            {(props) => <KanjiDetailScreen {...props} user={mockUser} />}
+          <Stack.Screen name="Learn" component={LearnScreen} />
+          <Stack.Screen
+            name="KanjiDetail"
+            options={{
+              presentation: 'modal',
+              animation: 'slide_from_bottom',
+              animationDuration: 300,
+            }}
+          >
+            {(props) => <KanjiDetailScreen {...props} user={Auth} />}
           </Stack.Screen>
         </Stack.Navigator>
       </NavigationContainer>

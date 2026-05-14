@@ -49,32 +49,34 @@ export default function SettingsScreen({ navigation }) {
           <Text style={styles.sectionLabel}>Voice</Text>
 
           <View style={styles.card}>
-            <Text style={styles.cardLabel}>Voice Gender</Text>
-            <View style={styles.options}>
+            <Text style={styles.compactLabel}>Gender</Text>
+            <View style={styles.compactOptions}>
               {VOICE_OPTIONS.map((option) => (
                 <TouchableOpacity
                   key={option.value}
-                  style={[styles.option, settings.voiceGender === option.value && styles.optionActive]}
+                  style={[styles.compactOption, settings.voiceGender === option.value && styles.compactOptionActive]}
                   onPress={() => updateSetting('voiceGender', option.value)}
                   activeOpacity={0.7}
                 >
-                  <Text style={[styles.optionText, settings.voiceGender === option.value && styles.optionTextActive]}>
+                  <Text style={[styles.compactOptionText, settings.voiceGender === option.value && styles.compactOptionTextActive]}>
                     {option.label}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
 
-            <Text style={[styles.cardLabel, { marginTop: 16 }]}>Speech Rate</Text>
-            <View style={styles.options}>
+            <View style={styles.divider} />
+
+            <Text style={styles.compactLabel}>Speed</Text>
+            <View style={styles.speedOptions}>
               {SPEECH_RATE_OPTIONS.map((option) => (
                 <TouchableOpacity
                   key={option.value}
-                  style={[styles.option, settings.speechRate === option.value && styles.optionActive]}
+                  style={[styles.speedOption, settings.speechRate === option.value && styles.speedOptionActive]}
                   onPress={() => updateSetting('speechRate', option.value)}
                   activeOpacity={0.7}
                 >
-                  <Text style={[styles.optionText, settings.speechRate === option.value && styles.optionTextActive]}>
+                  <Text style={[styles.speedOptionText, settings.speechRate === option.value && styles.speedOptionTextActive]}>
                     {option.label}
                   </Text>
                 </TouchableOpacity>
@@ -82,13 +84,13 @@ export default function SettingsScreen({ navigation }) {
             </View>
 
             <TouchableOpacity
-              style={[styles.testButton, testingVoice && styles.testButtonActive]}
+              style={[styles.testButtonBottomRight, testingVoice && styles.testButtonActive]}
               onPress={testVoice}
               disabled={testingVoice}
               activeOpacity={0.7}
             >
-              <Text style={styles.testButtonText}>
-                {testingVoice ? '🔊 Playing...' : '🔊 Test Voice'}
+              <Text style={styles.testButtonCompactText}>
+                {testingVoice ? '🔊' : '🔊'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -161,54 +163,91 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: '#1A1A1A',
-    padding: 20,
+    padding: 16,
+    paddingBottom: 60,
+    position: 'relative',
   },
-  cardLabel: {
+  compactLabel: {
     color: '#AAA',
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: '600',
-    marginBottom: 10,
+    marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
-  options: {
-    gap: 8,
+  compactOptions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
   },
-  option: {
+  compactOption: {
     backgroundColor: '#0A0A0A',
-    borderRadius: 10,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#222',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
   },
-  optionActive: {
+  compactOptionActive: {
     backgroundColor: '#E85D3A',
     borderColor: '#E85D3A',
   },
-  optionText: {
+  compactOptionText: {
     color: '#888',
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '600',
-    textAlign: 'center',
   },
-  optionTextActive: {
+  compactOptionTextActive: {
     color: '#FFF',
   },
-  testButton: {
-    marginTop: 16,
+  testButtonBottomRight: {
+    position: 'absolute',
+    bottom: 12,
+    right: 12,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: '#1A1A1A',
-    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#333',
-    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   testButtonActive: {
     opacity: 0.6,
   },
-  testButtonText: {
-    color: '#E85D3A',
-    fontSize: 14,
+  testButtonCompactText: {
+    fontSize: 18,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#1A1A1A',
+    marginVertical: 12,
+  },
+  speedOptions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  speedOption: {
+    backgroundColor: '#0A0A0A',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#222',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  speedOptionActive: {
+    backgroundColor: '#E85D3A',
+    borderColor: '#E85D3A',
+  },
+  speedOptionText: {
+    color: '#888',
+    fontSize: 11,
     fontWeight: '600',
-    textAlign: 'center',
+  },
+  speedOptionTextActive: {
+    color: '#FFF',
   },
   preview: {
     backgroundColor: '#0A0A0A',
