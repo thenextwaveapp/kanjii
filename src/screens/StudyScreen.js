@@ -8,11 +8,18 @@ import {
   TouchableOpacity,
   SafeAreaView,
   TextInput,
+  Modal,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { fetchKanji, fetchUserSentences } from '../services/progress';
 import { toRomaji, toHiragana } from 'wanakana';
 import { supabase } from '../services/supabase';
+import {
+  fetchSentenceLists,
+  createSentenceList,
+  addSentenceToList,
+  removeSentenceFromList,
+} from '../services/sentenceLists';
 
 const KANJI_TABS = ['All', 'Needs work', 'Mastered'];
 const KANJI_RE = /[\u4E00-\u9FFF\u3400-\u4DBF]/g;
@@ -38,6 +45,13 @@ export default function StudyScreen({ navigation, user }) {
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
 
+  // Sentence lists state
+  const [sentenceLists, setSentenceLists] = useState([]);
+  const [showListModal, setShowListModal] = useState(false);
+  const [newListName, setNewListName] = useState('');
+  const [newListColor, setNewListColor] = useState('#E85D3A');
+  const [activeListFilters, setActiveListFilters] = useState([]);
+
   useFocusEffect(
     useCallback(() => {
       if (!user?.id) { setLoading(false); return; }
@@ -45,17 +59,55 @@ export default function StudyScreen({ navigation, user }) {
       Promise.all([
         fetchKanji(user.id),
         fetchUserSentences(user.id),
-      ]).then(([kanji, sents]) => {
+        fetchSentenceLists(user.id),
+      ]).then(([kanji, sents, lists]) => {
         setKanjiList(kanji);
         setSentences(sents);
+        setSentenceLists(lists);
         setLoading(false);
       });
     }, [user?.id])
   );
 
-  // Search database when query changes
+  const handleCreateList = async () => {
+    if (!newListName.trim() || !user?.id) return;
+    try {
+      const newList = await createSentenceList(user.id, newListName.trim(), newListColor);
+      setSentenceLists([...sentenceLists, newList]);
+      setNewListName('');
+      setNewListColor('#E85D3A');
+      setShowListModal(false);
+    } catch (error) {
+      console.error('Failed to create list:', error);
+    }
+  };
+
+  const toggleSentenceInList = async (listId, sentenceId, isInList) => {
+    try {
+      if (isInList) {
+        await removeSentenceFromList(listId, sentenceId);
+      } else {
+        await addSentenceToList(listId, sentenceId);
+      }
+      // Refresh sentences to update list membership
+      const sents = await fetchUserSentences(user.id);
+      setSentences(sents);
+    } catch (error) {
+      console.error('Failed to toggle sentence in list:', error);
+    }
+  };
+
+  const toggleListFilter = (listId) => {
+    setActiveListFilters(prev =>
+      prev.includes(listId)
+        ? prev.filter(id => id !== listId)
+        : [...prev, listId]
+    );
+  };
+
+  // Search when query changes (works for both kanji and sentences)
   useEffect(() => {
-    const searchDatabase = async () => {
+    const performSearch = async () => {
       if (!searchQuery.trim()) {
         setSearchResults([]);
         setSearching(false);
@@ -63,84 +115,132 @@ export default function StudyScreen({ navigation, user }) {
       }
 
       setSearching(true);
-      const query = searchQuery.toLowerCase();
+      const query = searchQuery.toLowerCase().trim();
       const hiraganaQuery = toHiragana(query);
 
-      // Search kanji_dictionary for matches
-      // 1. Search in kanji character directly
-      const { data: kanjiMatches } = await supabase
-        .from('kanji_dictionary')
-        .select('kanji, meanings, readings')
-        .ilike('kanji', `%${query}%`)
-        .limit(50);
+      if (mode === 'kanji') {
+        // Search kanji_dictionary for matches
+        // 1. Search in kanji character directly
+        const { data: kanjiMatches } = await supabase
+          .from('kanji_dictionary')
+          .select('kanji, meanings, readings, readings_romaji')
+          .ilike('kanji', `%${query}%`)
+          .limit(50);
 
-      // 2. Search in meanings array
-      const { data: meaningMatches } = await supabase
-        .rpc('search_kanji_meanings', { search_query: query })
-        .limit(50);
+        // 2. Search in meanings array
+        const { data: meaningMatches } = await supabase
+          .rpc('search_kanji_meanings', { search_query: query })
+          .limit(200);
 
-      // 3. Search in readings with both original query AND hiragana version
-      // This handles both romaji in DB ('kuruma') and hiragana ('くるま')
-      const searches = [query];
-      if (hiraganaQuery !== query) {
-        searches.push(hiraganaQuery);
+        // 3. Get all kanji and filter by exact reading match
+        const { data: allKanji } = await supabase
+          .from('kanji_dictionary')
+          .select('kanji, meanings, readings, readings_romaji')
+          .limit(1000);
+
+        // Filter for exact reading matches (hiragana or romaji)
+        const readingMatches = (allKanji || []).filter(k => {
+          const hasExactHiraganaMatch = k.readings?.some(r =>
+            r.toLowerCase() === query || r.toLowerCase() === hiraganaQuery
+          );
+          const hasExactRomajiMatch = k.readings_romaji?.some(r =>
+            r.toLowerCase() === query
+          );
+          return hasExactHiraganaMatch || hasExactRomajiMatch;
+        });
+
+        // Combine and sort by relevance
+        const seen = new Set();
+        const allResults = [];
+
+        // Helper to calculate relevance score (lower = better)
+        const getRelevance = (k) => {
+          // Get JLPT level weight (N5=10, N4=20, N3=30, N2=40, N1=50, unknown=60)
+          const jlptWeight = k.jlpt_level ?
+            parseInt(k.jlpt_level.replace('N', '')) * 10 : 60;
+
+          // Base relevance by match type (multiply by 100 to prioritize over JLPT)
+          let baseRelevance = 500; // default
+
+          // Exact kanji match (highest)
+          if (k.kanji === query) {
+            baseRelevance = 100;
+          }
+          // Exact reading match
+          else if (
+            k.readings?.some(r =>
+              r.toLowerCase() === query || r.toLowerCase() === hiraganaQuery
+            ) || k.readings_romaji?.some(r => r.toLowerCase() === query)
+          ) {
+            baseRelevance = 200;
+          }
+          // Exact meaning match
+          else if (k.meanings?.some(m => m.toLowerCase() === query)) {
+            baseRelevance = 300;
+          }
+          // Meaning starts with query
+          else if (k.meanings?.some(m => m.toLowerCase().startsWith(query))) {
+            baseRelevance = 400;
+          }
+
+          // Combine: match type + JLPT level (e.g., exact match N5 = 100+10=110, contains N1 = 500+50=550)
+          return baseRelevance + jlptWeight;
+        };
+
+        // Collect all unique results with relevance
+        [...readingMatches, ...(kanjiMatches || []), ...(meaningMatches || [])].forEach(k => {
+          if (!seen.has(k.kanji)) {
+            seen.add(k.kanji);
+            allResults.push({ ...k, relevance: getRelevance(k) });
+          }
+        });
+
+        // Sort by relevance (lower number = higher priority) and limit to top 20
+        const dictResults = allResults
+          .sort((a, b) => a.relevance - b.relevance)
+          .slice(0, 20);
+
+        // Merge user progress with dictionary results
+        const userKanjiMap = new Map(kanjiList.map(k => [k.kanji, k]));
+
+        const merged = (dictResults || []).map(dictKanji => {
+          const userKanji = userKanjiMap.get(dictKanji.kanji);
+          if (userKanji) {
+            return userKanji;
+          } else {
+            return {
+              kanji: dictKanji.kanji,
+              meanings: dictKanji.meanings || [],
+              readings: dictKanji.readings || [],
+              seen_count: 0,
+              skip_count: 0,
+              mastery: null,
+              jlpt_level: 'unknown',
+            };
+          }
+        });
+
+        setSearchResults(merged);
+      } else {
+        // Search sentences by japanese or english text
+        const filtered = sentences.filter(s =>
+          s.japanese?.toLowerCase().includes(query) ||
+          s.japanese?.includes(hiraganaQuery) ||
+          s.english?.toLowerCase().includes(query)
+        );
+        setSearchResults(filtered);
       }
 
-      const readingResults = await Promise.all(
-        searches.map(q =>
-          supabase
-            .rpc('search_kanji_readings', { search_query: q })
-            .limit(50)
-        )
-      );
-
-      const readingMatches = readingResults.flatMap(r => r.data || []);
-
-      // Combine all results (remove duplicates)
-      const seen = new Set();
-      const dictResults = [];
-
-      [...(kanjiMatches || []), ...(meaningMatches || []), ...(readingMatches || [])].forEach(k => {
-        if (!seen.has(k.kanji)) {
-          seen.add(k.kanji);
-          dictResults.push(k);
-        }
-      });
-
-      // Merge user progress with dictionary results
-      const userKanjiMap = new Map(kanjiList.map(k => [k.kanji, k]));
-
-      const merged = (dictResults || []).map(dictKanji => {
-        const userKanji = userKanjiMap.get(dictKanji.kanji);
-        if (userKanji) {
-          // User has this kanji - use their data
-          return userKanji;
-        } else {
-          // New kanji - use dictionary data with default values
-          return {
-            kanji: dictKanji.kanji,
-            meanings: dictKanji.meanings || [],
-            readings: dictKanji.readings || [],
-            seen_count: 0,
-            skip_count: 0,
-            mastery: null,
-            jlpt_level: 'unknown',
-          };
-        }
-      });
-
-      setSearchResults(merged);
       setSearching(false);
     };
 
-    const debounce = setTimeout(searchDatabase, 300);
+    const debounce = setTimeout(performSearch, 300);
     return () => clearTimeout(debounce);
-  }, [searchQuery, kanjiList]);
+  }, [searchQuery, kanjiList, sentences, mode]);
 
-  // Use search results if searching, otherwise filter user's kanji
-  const displayList = searchQuery.trim() ? searchResults : kanjiList;
-
-  const filteredKanji = displayList.filter((k) => {
+  // Filter kanji based on search and active tab
+  const displayKanji = searchQuery.trim() ? searchResults : kanjiList;
+  const filteredKanji = displayKanji.filter((k) => {
     // Skip tab filter when searching (show all results)
     if (searchQuery.trim()) return true;
 
@@ -154,6 +254,16 @@ export default function StudyScreen({ navigation, user }) {
 
     return true;
   });
+
+  // Filter sentences based on search and active list filters
+  let displaySentences = searchQuery.trim() ? searchResults : sentences;
+
+  // Apply list filters if any are active
+  if (mode === 'sentences' && activeListFilters.length > 0) {
+    displaySentences = displaySentences.filter(s =>
+      activeListFilters.some(listId => s.listIds?.includes(listId))
+    );
+  }
 
   const weakKanji = kanjiList
     .filter((k) => k.skip_count > 0 || k.seen_count < 3)
@@ -189,34 +299,39 @@ export default function StudyScreen({ navigation, user }) {
         <Text style={styles.logo}>Kanj<Text style={styles.logoAccent}>ii</Text></Text>
       </View>
 
-      {/* Search bar */}
-      {mode === 'kanji' && (
-        <View style={styles.searchContainer}>
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search kanji, meaning, or reading..."
-            placeholderTextColor="#555"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity
-              style={styles.searchClear}
-              onPress={() => setSearchQuery('')}
-            >
-              <Text style={styles.searchClearText}>✕</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      )}
+      {/* Search bar - works for both tabs */}
+      <View style={styles.searchContainer}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder={
+            mode === 'kanji'
+              ? 'Search kanji, meaning, or reading...'
+              : 'Search sentences...'
+          }
+          placeholderTextColor="#555"
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        {searchQuery.length > 0 && (
+          <TouchableOpacity
+            style={styles.searchClear}
+            onPress={() => setSearchQuery('')}
+          >
+            <Text style={styles.searchClearText}>✕</Text>
+          </TouchableOpacity>
+        )}
+      </View>
 
       {/* Mode toggle */}
       <View style={styles.modeRow}>
         <TouchableOpacity
           style={[styles.modeBtn, mode === 'kanji' && styles.modeBtnActive]}
-          onPress={() => setMode('kanji')}
+          onPress={() => {
+            setMode('kanji');
+            setSearchQuery(''); // Clear search when switching tabs
+          }}
         >
           <Text style={[styles.modeBtnText, mode === 'kanji' && styles.modeBtnTextActive]}>
             Kanji
@@ -231,7 +346,10 @@ export default function StudyScreen({ navigation, user }) {
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.modeBtn, mode === 'sentences' && styles.modeBtnActive]}
-          onPress={() => setMode('sentences')}
+          onPress={() => {
+            setMode('sentences');
+            setSearchQuery(''); // Clear search when switching tabs
+          }}
         >
           <Text style={[styles.modeBtnText, mode === 'sentences' && styles.modeBtnTextActive]}>
             Sentences
@@ -263,11 +381,66 @@ export default function StudyScreen({ navigation, user }) {
         />
       ) : (
         <SentencesView
-          sentences={sentences}
+          sentences={displaySentences}
+          searchQuery={searchQuery}
+          lists={sentenceLists}
+          activeFilters={activeListFilters}
+          onToggleFilter={toggleListFilter}
           onPractice={practiceSentence}
+          onOpenListModal={() => setShowListModal(true)}
+          onToggleSentenceInList={toggleSentenceInList}
           navigation={navigation}
         />
       )}
+
+      {/* Create List Modal */}
+      <Modal
+        visible={showListModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowListModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Create New List</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="List name..."
+              placeholderTextColor="#555"
+              value={newListName}
+              onChangeText={setNewListName}
+              autoFocus
+            />
+            <View style={styles.colorPicker}>
+              {['#E85D3A', '#4A90E2', '#4CAF50', '#FFA726', '#AB47BC', '#EC407A'].map(color => (
+                <TouchableOpacity
+                  key={color}
+                  style={[
+                    styles.colorOption,
+                    { backgroundColor: color },
+                    newListColor === color && styles.colorOptionSelected
+                  ]}
+                  onPress={() => setNewListColor(color)}
+                />
+              ))}
+            </View>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalButtonCancel]}
+                onPress={() => setShowListModal(false)}
+              >
+                <Text style={styles.modalButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalButtonCreate]}
+                onPress={handleCreateList}
+              >
+                <Text style={styles.modalButtonText}>Create</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -346,29 +519,25 @@ function KanjiView({ kanjiList, filtered, activeTab, setActiveTab, weakKanji, on
                 </View>
               </View>
 
-              {/* Readings */}
-              {k.readings?.length > 0 && (
+              {/* Example word chips */}
+              {k.exampleWords && k.exampleWords.length > 0 && (
                 <View style={styles.readingsRow}>
-                  {k.readings.slice(0, 4).map((reading, idx) => (
-                    <View key={idx} style={styles.readingPill}>
-                      <Text style={styles.readingText}>{reading}</Text>
+                  {k.exampleWords.slice(0, 3).map((w, idx) => (
+                    <View key={idx} style={styles.readingChip}>
+                      <Text style={styles.readingChipKanji}>{w.word}</Text>
+                      <Text style={styles.readingChipFurigana}>{w.furigana}</Text>
+                      {w.meaning && (
+                        <Text style={styles.readingChipMeaning} numberOfLines={1}>
+                          {w.meaning}
+                        </Text>
+                      )}
                     </View>
                   ))}
-                  {k.readings.length > 4 && (
-                    <Text style={styles.moreReadings}>+{k.readings.length - 4}</Text>
+                  {k.exampleWords.length > 3 && (
+                    <Text style={styles.moreReadings}>+{k.exampleWords.length - 3}</Text>
                   )}
                 </View>
               )}
-
-              {/* Meanings */}
-              <View style={styles.meaningsContainer}>
-                <Text style={styles.meanings} numberOfLines={2}>
-                  {k.meanings?.slice(0, 3).join(', ') || '—'}
-                </Text>
-                {k.meanings?.length > 3 && (
-                  <Text style={styles.moreMeanings}> +{k.meanings.length - 3}</Text>
-                )}
-              </View>
             </TouchableOpacity>
           )}
           ItemSeparatorComponent={() => <View style={styles.separator} />}
@@ -378,24 +547,67 @@ function KanjiView({ kanjiList, filtered, activeTab, setActiveTab, weakKanji, on
   );
 }
 
-function SentencesView({ sentences, onPractice, navigation }) {
+function SentencesView({ sentences, searchQuery, lists, activeFilters, onToggleFilter, onPractice, onOpenListModal, onToggleSentenceInList, navigation }) {
   if (sentences.length === 0) {
     return (
       <View style={styles.center}>
-        <Text style={styles.emptyTitle}>No sentences yet</Text>
+        <Text style={styles.emptyTitle}>
+          {searchQuery ? 'No results found' : 'No sentences yet'}
+        </Text>
         <Text style={styles.emptyText}>
-          Complete a practice round to see your sentences here
+          {searchQuery
+            ? 'Try a different search term'
+            : 'Complete a practice round to see your sentences here'}
         </Text>
       </View>
     );
   }
 
   return (
-    <FlatList
-      data={sentences}
-      keyExtractor={(s, i) => s.id ?? String(i)}
-      contentContainerStyle={styles.list}
-      renderItem={({ item: s }) => {
+    <>
+      {/* List badges or plus button */}
+      <View style={styles.listBadgesContainer}>
+        {lists.length === 0 ? (
+          <TouchableOpacity
+            style={styles.addListButton}
+            onPress={onOpenListModal}
+          >
+            <Text style={styles.addListButtonText}>+</Text>
+          </TouchableOpacity>
+        ) : (
+          <>
+            {lists.map(list => {
+              const isActive = activeFilters.includes(list.id);
+              return (
+                <TouchableOpacity
+                  key={list.id}
+                  style={[
+                    styles.listBadge,
+                    { backgroundColor: list.color },
+                    !isActive && styles.listBadgeInactive
+                  ]}
+                  onPress={() => onToggleFilter(list.id)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.listBadgeText}>{list.name}</Text>
+                </TouchableOpacity>
+              );
+            })}
+            <TouchableOpacity
+              style={styles.addListButtonSmall}
+              onPress={onOpenListModal}
+            >
+              <Text style={styles.addListButtonText}>+</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+
+      <FlatList
+        data={sentences}
+        keyExtractor={(s, i) => s.id ?? String(i)}
+        contentContainerStyle={styles.list}
+        renderItem={({ item: s }) => {
         const kanjiChars = extractKanjiChars(s.japanese);
         return (
           <TouchableOpacity
@@ -404,22 +616,31 @@ function SentencesView({ sentences, onPractice, navigation }) {
             activeOpacity={0.8}
           >
             {/* Kanji chips */}
-            {kanjiChars.length > 0 && (
+            {s.words && s.words.length > 0 && (
               <View style={styles.kanjiChipsRow}>
-                {kanjiChars.slice(0, 6).map((ch) => (
+                {s.words.slice(0, 4).map((w, idx) => (
                   <TouchableOpacity
-                    key={ch}
+                    key={`${w.word}-${idx}`}
                     style={styles.kanjiChipSmall}
                     onPress={(e) => {
                       e.stopPropagation?.();
-                      navigation.navigate('KanjiDetail', { kanji: ch });
+                      const firstKanji = w.word?.match(/[\u4E00-\u9FFF\u3400-\u4DBF]/)?.[0];
+                      if (firstKanji) {
+                        navigation.navigate('KanjiDetail', { kanji: firstKanji });
+                      }
                     }}
                   >
-                    <Text style={styles.kanjiChipTextSmall}>{ch}</Text>
+                    <Text style={styles.kanjiChipWord}>{w.word}</Text>
+                    {w.furigana && (
+                      <Text style={styles.kanjiChipFurigana}>{w.furigana}</Text>
+                    )}
+                    {w.meaning && (
+                      <Text style={styles.kanjiChipMeaning}>{w.meaning}</Text>
+                    )}
                   </TouchableOpacity>
                 ))}
-                {kanjiChars.length > 6 && (
-                  <Text style={styles.moreKanji}>+{kanjiChars.length - 6}</Text>
+                {s.words.length > 4 && (
+                  <Text style={styles.moreKanji}>+{s.words.length - 4}</Text>
                 )}
               </View>
             )}
@@ -427,6 +648,35 @@ function SentencesView({ sentences, onPractice, navigation }) {
             {/* Japanese and English */}
             <Text style={styles.sentenceJapanese}>{s.japanese}</Text>
             <Text style={styles.sentenceEnglish}>{s.english}</Text>
+
+            {/* List checkboxes */}
+            {lists.length > 0 && (
+              <View style={styles.sentenceListsRow}>
+                {lists.map(list => {
+                  const isInList = s.listIds?.includes(list.id) || false;
+                  return (
+                    <TouchableOpacity
+                      key={list.id}
+                      style={[
+                        styles.listCheckbox,
+                        isInList && { backgroundColor: list.color }
+                      ]}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        onToggleSentenceInList(list.id, s.id, isInList);
+                      }}
+                    >
+                      <Text style={[
+                        styles.listCheckboxText,
+                        isInList && styles.listCheckboxTextActive
+                      ]}>
+                        {list.name.charAt(0)}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
 
             {/* Practice hint */}
             <View style={styles.sentenceFooter}>
@@ -437,6 +687,7 @@ function SentencesView({ sentences, onPractice, navigation }) {
       }}
       ItemSeparatorComponent={() => <View style={styles.separator} />}
     />
+    </>
   );
 }
 
@@ -610,19 +861,33 @@ const styles = StyleSheet.create({
     gap: 5,
     alignItems: 'center',
   },
-  readingPill: {
+  readingChip: {
     backgroundColor: '#1A1A1A',
-    borderRadius: 6,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#333',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 2,
+    maxWidth: 120,
   },
-  readingText: {
+  readingChipKanji: {
+    color: '#EFEFEF',
+    fontSize: 24,
+    fontWeight: '400',
+    marginBottom: 2,
+  },
+  readingChipFurigana: {
     color: '#E85D3A',
-    fontSize: 12,
-    fontWeight: '600',
-    letterSpacing: 0.3,
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  readingChipMeaning: {
+    color: '#AAA',
+    fontSize: 11,
+    marginTop: 2,
+    letterSpacing: 0.2,
   },
   moreReadings: {
     color: '#555',
@@ -664,18 +929,30 @@ const styles = StyleSheet.create({
   },
   kanjiChipSmall: {
     backgroundColor: '#1A1A1A',
-    borderRadius: 6,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#333',
-    width: 26,
-    height: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 2,
   },
-  kanjiChipTextSmall: {
+  kanjiChipWord: {
+    color: '#EFEFEF',
+    fontSize: 24,
+    fontWeight: '400',
+    marginBottom: 2,
+  },
+  kanjiChipFurigana: {
     color: '#E85D3A',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  kanjiChipMeaning: {
+    color: '#AAA',
+    fontSize: 11,
+    marginTop: 2,
+    letterSpacing: 0.2,
   },
   moreKanji: {
     color: '#555',
@@ -703,5 +980,152 @@ const styles = StyleSheet.create({
     color: '#666',
     fontSize: 12,
     fontWeight: '600',
+  },
+  listBadgesContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  addListButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#1A1A1A',
+    borderWidth: 2,
+    borderColor: '#E85D3A',
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addListButtonSmall: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#1A1A1A',
+    borderWidth: 2,
+    borderColor: '#E85D3A',
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addListButtonText: {
+    color: '#E85D3A',
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  listBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  listBadgeInactive: {
+    opacity: 0.3,
+  },
+  listBadgeText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  sentenceListsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
+  },
+  listCheckbox: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#1A1A1A',
+    borderWidth: 2,
+    borderColor: '#333',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  listCheckboxText: {
+    color: '#666',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  listCheckboxTextActive: {
+    color: '#fff',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalContent: {
+    backgroundColor: '#111',
+    borderRadius: 16,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  modalTitle: {
+    color: '#EFEFEF',
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 16,
+  },
+  modalInput: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#333',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: '#EFEFEF',
+    fontSize: 16,
+    marginBottom: 16,
+  },
+  colorPicker: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 20,
+    justifyContent: 'center',
+  },
+  colorOption: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 3,
+    borderColor: 'transparent',
+  },
+  colorOptionSelected: {
+    borderColor: '#fff',
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  modalButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  modalButtonCancel: {
+    backgroundColor: '#1A1A1A',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  modalButtonCreate: {
+    backgroundColor: '#E85D3A',
+  },
+  modalButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
   },
 });

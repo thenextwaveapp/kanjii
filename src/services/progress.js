@@ -24,7 +24,7 @@ export async function recordCompletion({ userId, sentenceId, words, attempts, gr
   const today = new Date().toISOString().slice(0, 10);
 
   await Promise.all([
-    sentenceId ? upsertProgress(userId, sentenceId, attempts) : Promise.resolve(),
+    sentenceId ? upsertProgress(userId, sentenceId, attempts, grade) : Promise.resolve(),
     updateKanjiSeen(userId, words, grade, jlptLevel),
     upsertStats(userId, points, today),
   ]);
@@ -101,9 +101,41 @@ export async function getNewKanjiSince(userId, isoTimestamp) {
   return data || [];
 }
 
-async function upsertProgress(userId, sentenceId, attempts) {
+async function upsertProgress(userId, sentenceId, attempts, grade) {
+  // Fetch existing progress to determine best grade
+  const { data: existing } = await supabase
+    .from('user_progress')
+    .select('best_grade, practice_count')
+    .eq('user_id', userId)
+    .eq('sentence_id', sentenceId)
+    .single();
+
+  let bestGrade = grade;
+  let practiceCount = 1;
+
+  if (existing) {
+    practiceCount = (existing.practice_count || 0) + 1;
+
+    // Determine best grade: ○ > △ > ×
+    if (existing.best_grade === '○' || grade === '○') {
+      bestGrade = '○';
+    } else if (existing.best_grade === '△' || grade === '△') {
+      bestGrade = '△';
+    } else {
+      bestGrade = '×';
+    }
+  }
+
   await supabase.from('user_progress').upsert(
-    { user_id: userId, sentence_id: sentenceId, attempts, completed_at: new Date().toISOString() },
+    {
+      user_id: userId,
+      sentence_id: sentenceId,
+      attempts,
+      completed_at: new Date().toISOString(),
+      best_grade: bestGrade,
+      practice_count: practiceCount,
+      last_practiced_at: new Date().toISOString()
+    },
     { onConflict: 'user_id,sentence_id' }
   );
 }
@@ -234,10 +266,11 @@ async function upsertStats(userId, points, today) {
 }
 
 export async function fetchKanjiDetail(userId, kanji) {
-  const [{ data: kanjiData }, { data: dictData }, { data: sentenceRows }] = await Promise.all([
+  const [{ data: kanjiData }, { data: dictData }, { data: sentenceRows }, { data: exampleSentences }] = await Promise.all([
     supabase.from('user_kanji').select('*').eq('user_id', userId).eq('kanji', kanji).single(),
     supabase.from('kanji_dictionary').select('*').eq('kanji', kanji).single(),
     supabase.from('user_progress').select('attempts, completed_at, sentences(*)').eq('user_id', userId),
+    supabase.from('sentences').select('*').ilike('japanese', `%${kanji}%`).limit(10),
   ]);
 
   // Merge user progress with dictionary data
@@ -249,7 +282,7 @@ export async function fetchKanjiDetail(userId, kanji) {
     // New kanji - use dictionary data with default stats
     mergedData = {
       kanji: dictData.kanji,
-      meanings: [dictData.meaning],
+      meanings: dictData.meanings || [],
       readings: dictData.readings || [],
       jlpt_level: 'unknown',
       seen_count: 0,
@@ -258,23 +291,92 @@ export async function fetchKanjiDetail(userId, kanji) {
     };
   }
 
-  const sentences = (sentenceRows || [])
+  const userSentences = (sentenceRows || [])
     .map((r) => ({ ...r.sentences, attempts: r.attempts, completed_at: r.completed_at }))
     .filter((s) => s?.japanese?.includes(kanji));
 
-  return { kanjiData: mergedData, sentences };
+  // Extract unique words containing this kanji
+  const wordsSet = new Set();
+  const exampleWords = [];
+
+  // First from user sentences
+  userSentences.forEach(s => {
+    (s.words || []).forEach(w => {
+      if (w.word?.includes(kanji) && !wordsSet.has(w.word)) {
+        wordsSet.add(w.word);
+        exampleWords.push({
+          word: w.word,
+          furigana: w.furigana,
+          meaning: w.meaning
+        });
+      }
+    });
+  });
+
+  // Then from example sentences if needed
+  if (exampleWords.length < 5) {
+    (exampleSentences || []).forEach(s => {
+      (s.words || []).forEach(w => {
+        if (w.word?.includes(kanji) && !wordsSet.has(w.word) && exampleWords.length < 10) {
+          wordsSet.add(w.word);
+          exampleWords.push({
+            word: w.word,
+            furigana: w.furigana,
+            meaning: w.meaning
+          });
+        }
+      });
+    });
+  }
+
+  // Add example words to merged data
+  if (mergedData) {
+    mergedData.exampleWords = exampleWords.slice(0, 10);
+  }
+
+  return {
+    kanjiData: mergedData,
+    sentences: userSentences,
+    exampleSentences: (exampleSentences || []).filter(s => !userSentences.find(us => us.id === s.id))
+  };
 }
 
 export async function fetchUserSentences(userId) {
   const { data } = await supabase
     .from('user_progress')
-    .select('attempts, completed_at, sentences(*)')
+    .select('attempts, completed_at, best_grade, practice_count, last_practiced_at, sentences(*)')
     .eq('user_id', userId)
     .order('completed_at', { ascending: false })
     .limit(60);
-  return (data || [])
-    .map((row) => ({ ...row.sentences, attempts: row.attempts, completed_at: row.completed_at }))
+
+  const sentences = (data || [])
+    .map((row) => ({
+      ...row.sentences,
+      attempts: row.attempts,
+      completed_at: row.completed_at,
+      best_grade: row.best_grade,
+      practice_count: row.practice_count,
+      last_practiced_at: row.last_practiced_at
+    }))
     .filter((s) => s?.id);
+
+  // Fetch list membership for all sentences
+  if (sentences.length > 0) {
+    const sentenceIds = sentences.map(s => s.id);
+    const { data: listItems } = await supabase
+      .from('sentence_list_items')
+      .select('sentence_id, list_id')
+      .in('sentence_id', sentenceIds);
+
+    // Add listIds to each sentence
+    sentences.forEach(s => {
+      s.listIds = (listItems || [])
+        .filter(item => item.sentence_id === s.id)
+        .map(item => item.list_id);
+    });
+  }
+
+  return sentences;
 }
 
 export async function fetchStats(userId) {
@@ -288,5 +390,42 @@ export async function fetchKanji(userId) {
     .select('*')
     .eq('user_id', userId)
     .order('seen_count', { ascending: false });
-  return data || [];
+
+  if (!data || data.length === 0) return [];
+
+  // Fetch example words for each kanji from sentences
+  const kanjiList = data.map(k => k.kanji);
+  const { data: sentences } = await supabase
+    .from('sentences')
+    .select('words')
+    .limit(500); // Get a reasonable sample
+
+  // Build a map of kanji -> example words
+  const exampleWordsMap = {};
+
+  kanjiList.forEach(kanji => {
+    exampleWordsMap[kanji] = [];
+    const wordsSet = new Set();
+
+    (sentences || []).forEach(s => {
+      (s.words || []).forEach(w => {
+        if (w.word?.includes(kanji) &&
+            !wordsSet.has(w.word) &&
+            exampleWordsMap[kanji].length < 3) {
+          wordsSet.add(w.word);
+          exampleWordsMap[kanji].push({
+            word: w.word,
+            furigana: w.furigana,
+            meaning: w.meaning
+          });
+        }
+      });
+    });
+  });
+
+  // Add exampleWords to each kanji
+  return data.map(k => ({
+    ...k,
+    exampleWords: exampleWordsMap[k.kanji] || []
+  }));
 }
