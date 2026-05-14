@@ -76,7 +76,7 @@ const styles = StyleSheet.create({
   trigger: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: '#111', borderRadius: 14, borderWidth: 1, borderColor: '#222',
-    paddingHorizontal: 18, paddingVertical: 14,
+    paddingHorizontal: 24, paddingVertical: 16,
   },
   triggerValue: { color: '#EFEFEF', fontSize: 16, fontWeight: '600' },
   triggerSub: { color: '#555', fontSize: 12, marginTop: 2 },
@@ -88,7 +88,7 @@ const styles = StyleSheet.create({
   sheet: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
     backgroundColor: '#111', borderTopLeftRadius: 24, borderTopRightRadius: 24,
-    paddingHorizontal: 24, paddingBottom: 16, maxHeight: '70%',
+    paddingHorizontal: 32, paddingBottom: 16, maxHeight: '70%',
   },
   sheetHandle: {
     width: 40, height: 4, backgroundColor: '#333',
@@ -97,10 +97,12 @@ const styles = StyleSheet.create({
   sheetTitle: {
     color: '#555', fontSize: 11, letterSpacing: 2,
     textTransform: 'uppercase', marginBottom: 16,
+    paddingHorizontal: 20,
   },
   option: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingVertical: 16,
+    paddingHorizontal: 20,
   },
   optionActive: {},
   optionLabel: { color: '#EFEFEF', fontSize: 16 },

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   SafeAreaView,
 } from 'react-native';
 import DropdownPicker from '../components/DropdownPicker';
+import { supabase } from '../services/supabase';
 
 const ROUND_OPTIONS = [
   { key: '5', label: '5 rounds', sub: 'Quick session' },
@@ -15,38 +16,146 @@ const ROUND_OPTIONS = [
   { key: '20', label: '20 rounds', sub: 'Full session' },
 ];
 
-const DOMAIN_OPTIONS = [
-  { key: 'Any', label: 'Any topic', sub: 'Surprise me' },
-  { key: 'Food & drink', label: 'Food & drink', sub: 'Restaurants, cooking, コンビニ' },
-  { key: 'Anime & manga', label: 'Anime & manga', sub: 'Reactions, recommendations, episode talk' },
-  { key: 'Gaming', label: 'Gaming', sub: 'Match results, gacha, grinding' },
-  { key: 'Weather & seasons', label: 'Weather & seasons', sub: 'Temperature, nature, seasons' },
-  { key: 'Relationships', label: 'Relationships', sub: 'Friends, family, drama' },
-  { key: 'Work & school', label: 'Work & school', sub: 'Exams, colleagues, Monday complaints' },
-  { key: 'Sports', label: 'Sports', sub: 'Match reactions, working out' },
-  { key: 'Travel', label: 'Travel', sub: 'Trains, trips, sightseeing' },
-  { key: 'Daily life', label: 'Daily life', sub: 'Waking up, food, random observations' },
-];
-
-const DIFFICULTY_OPTIONS = [
-  { key: 'Mixed', label: 'Mixed', sub: 'Any difficulty level' },
-  { key: 'N5', label: 'N5 — Beginner', sub: 'Basic kanji, short sentences' },
-  { key: 'N4', label: 'N4 — Elementary', sub: 'Common kanji and grammar' },
-  { key: 'N3', label: 'N3 — Intermediate', sub: 'Natural casual Japanese' },
-  { key: 'N2', label: 'N2 — Upper-intermediate', sub: 'Complex sentences, compound kanji' },
-  { key: 'N1', label: 'N1 — Advanced', sub: 'Native-level writing' },
-];
-
 export default function RoundSelectScreen({ navigation }) {
   const [rounds, setRounds] = useState('10');
   const [domain, setDomain] = useState('Any');
+  const [subtopic, setSubtopic] = useState(null);
   const [difficulty, setDifficulty] = useState('Mixed');
+  const [topicOptions, setTopicOptions] = useState([]);
+  const [subtopicOptions, setSubtopicOptions] = useState([]);
+  const [difficultyOptions, setDifficultyOptions] = useState([]);
+
+  // Load all topics and difficulties from DB on mount
+  useEffect(() => {
+    async function loadInitialData() {
+      const { data } = await supabase
+        .from('sentences')
+        .select('domain, jlpt_level')
+        .order('domain');
+
+      if (data) {
+        // Extract topics
+        const allDomains = [...new Set(data.map(row => row.domain))];
+        const mainTopics = new Set();
+        allDomains.forEach(d => {
+          if (d.includes(':')) {
+            const main = d.split(':')[0].trim();
+            mainTopics.add(main);
+          } else {
+            mainTopics.add(d);
+          }
+        });
+
+        const topics = [
+          { key: 'Any', label: 'Any topic', sub: 'Surprise me' },
+          ...Array.from(mainTopics).sort().map(topic => ({
+            key: topic,
+            label: topic,
+            sub: 'Choose subtopic',
+          })),
+        ];
+
+        setTopicOptions(topics);
+
+        // Extract unique difficulty levels
+        const levels = [...new Set(data.map(row => row.jlpt_level).filter(Boolean))];
+        const levelOrder = ['N5', 'N4', 'N3', 'N2', 'N1'];
+        const sortedLevels = levels.sort((a, b) =>
+          levelOrder.indexOf(a) - levelOrder.indexOf(b)
+        );
+
+        const difficultyOpts = [
+          { key: 'Mixed', label: 'Mixed', sub: 'Any difficulty level' },
+          ...sortedLevels.map(level => {
+            const labels = {
+              'N5': 'N5 — Beginner',
+              'N4': 'N4 — Elementary',
+              'N3': 'N3 — Intermediate',
+              'N2': 'N2 — Upper-intermediate',
+              'N1': 'N1 — Advanced',
+            };
+            const subs = {
+              'N5': 'Basic kanji, short sentences',
+              'N4': 'Common kanji and grammar',
+              'N3': 'Natural casual Japanese',
+              'N2': 'Complex sentences, compound kanji',
+              'N1': 'Native-level writing',
+            };
+            return {
+              key: level,
+              label: labels[level] || level,
+              sub: subs[level] || '',
+            };
+          }),
+        ];
+
+        setDifficultyOptions(difficultyOpts);
+      }
+    }
+
+    loadInitialData();
+  }, []);
+
+  // Load subtopics when domain changes
+  useEffect(() => {
+    if (domain === 'Any') {
+      setSubtopicOptions([]);
+      setSubtopic(null);
+      return;
+    }
+
+    async function loadSubtopics() {
+      const { data } = await supabase
+        .from('sentences')
+        .select('domain')
+        .or(`domain.like.${domain}:%,domain.eq.${domain}`)
+        .order('domain');
+
+      if (data) {
+        const uniqueDomains = [...new Set(data.map(row => row.domain))];
+
+        // Filter to only subtopics (contains ":")
+        const subtopics = uniqueDomains
+          .filter(d => d.includes(':') && d.startsWith(domain))
+          .map(d => ({
+            key: d,
+            label: d.split(': ')[1] || d,
+            sub: '',
+          }));
+
+        // Add "All" option at the beginning if subtopics exist
+        const subtopicOpts = subtopics.length > 0
+          ? [{ key: domain, label: 'All', sub: 'Any subtopic' }, ...subtopics]
+          : [];
+
+        setSubtopicOptions(subtopicOpts);
+
+        // Reset subtopic to "All" (domain) when domain changes
+        if (subtopicOpts.length > 0) {
+          setSubtopic(domain);
+        } else {
+          setSubtopic(null);
+        }
+      }
+    }
+
+    loadSubtopics();
+  }, [domain]);
+
+  const showSubtopicPicker = subtopicOptions.length > 0;
+
+  const handleDomainChange = (newDomain) => {
+    setDomain(newDomain);
+    setSubtopic(null); // Reset subtopic when domain changes
+  };
 
   const start = () => {
+    const finalDomain = subtopic || domain;
+
     navigation.navigate('Practice', {
       rounds: parseInt(rounds),
       difficulty,
-      domain,
+      domain: finalDomain,
     });
   };
 
@@ -55,7 +164,7 @@ export default function RoundSelectScreen({ navigation }) {
       <View style={styles.content}>
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()}>
+          <TouchableOpacity onPress={() => navigation.popToTop()}>
             <Text style={styles.backText}>← Back</Text>
           </TouchableOpacity>
           <Text style={styles.logo}>Kanj<Text style={styles.logoAccent}>ii</Text></Text>
@@ -74,15 +183,26 @@ export default function RoundSelectScreen({ navigation }) {
           <DropdownPicker
             label="Topic"
             value={domain}
-            options={DOMAIN_OPTIONS}
-            onChange={setDomain}
+            options={topicOptions}
+            onChange={handleDomainChange}
           />
-          <DropdownPicker
-            label="Difficulty"
-            value={difficulty}
-            options={DIFFICULTY_OPTIONS}
-            onChange={setDifficulty}
-          />
+          {showSubtopicPicker && (
+            <DropdownPicker
+              label="Subtopic"
+              value={subtopic}
+              options={subtopicOptions}
+              onChange={setSubtopic}
+            />
+          )}
+
+          {difficultyOptions.length > 0 && (
+            <DropdownPicker
+              label="Difficulty"
+              value={difficulty}
+              options={difficultyOptions}
+              onChange={setDifficulty}
+            />
+          )}
         </View>
 
         <TouchableOpacity style={styles.startButton} onPress={start} activeOpacity={0.85}>

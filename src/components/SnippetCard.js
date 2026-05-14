@@ -5,8 +5,10 @@ import {
   TouchableOpacity,
   StyleSheet,
 } from 'react-native';
-import * as Speech from 'expo-speech';
 import { toRomaji } from 'wanakana';
+import { speakJapanese, stopSpeaking } from '../services/tts';
+import { useSettings } from '../contexts/SettingsContext';
+import { VOICE_OPTIONS } from '../services/settings';
 
 function toHepburn(kana) {
   let r = toRomaji(kana)
@@ -26,27 +28,45 @@ function toHepburn(kana) {
 }
 
 export default function SnippetCard({ snippet }) {
+  const { settings } = useSettings();
   const [revealed, setRevealed] = useState({});
   const [speaking, setSpeaking] = useState(false);
   const [showRomaji, setShowRomaji] = useState(false);
+  const [currentSound, setCurrentSound] = useState(null);
 
   if (!snippet) return null;
 
   const { japanese, english, words } = snippet;
 
-  const speak = () => {
-    if (speaking) {
-      Speech.stop();
+  const speak = async () => {
+    if (speaking && currentSound) {
+      await stopSpeaking(currentSound);
+      setCurrentSound(null);
       setSpeaking(false);
       return;
     }
-    setSpeaking(true);
-    Speech.speak(japanese, {
-      language: 'ja-JP',
-      rate: 0.85,
-      onDone: () => setSpeaking(false),
-      onError: () => setSpeaking(false),
-    });
+
+    try {
+      setSpeaking(true);
+      const voiceConfig = VOICE_OPTIONS.find(v => v.value === settings.voiceGender);
+      const sound = await speakJapanese(japanese, {
+        voice: voiceConfig?.voice,
+        rate: settings.speechRate,
+      });
+
+      setCurrentSound(sound);
+
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (status.didJustFinish) {
+          setSpeaking(false);
+          setCurrentSound(null);
+        }
+      });
+    } catch (error) {
+      console.error('Speech error:', error);
+      setSpeaking(false);
+      setCurrentSound(null);
+    }
   };
 
   // Build a map of word → { furigana, meaning }
@@ -54,6 +74,10 @@ export default function SnippetCard({ snippet }) {
   (words || []).forEach((w) => {
     wordMap[w.word] = { furigana: w.furigana, meaning: w.meaning };
   });
+
+  // Debug: log the wordMap
+  console.log('WordMap:', wordMap);
+  console.log('Japanese text:', japanese);
 
   // Build romaji: substitute furigana for kanji words, convert kana to Hepburn, add spaces
   const romaji = tokenise(japanese, wordMap)
@@ -69,8 +93,11 @@ export default function SnippetCard({ snippet }) {
   // Split japanese text into tappable segments
   // We try to match known words, falling back to character-by-character
   const segments = tokenise(japanese, wordMap);
+  console.log('Segments:', segments);
 
   const toggleWord = (word) => {
+    console.log('Tapped word:', word);
+    console.log('Word info:', wordMap[word]);
     setRevealed((prev) => ({ ...prev, [word]: !prev[word] }));
   };
 

@@ -65,7 +65,7 @@ export default function HomeScreen({ navigation, user }) {
       <View style={styles.actions}>
         <TouchableOpacity
           style={styles.primaryCard}
-          onPress={() => navigation.navigate('RoundSelect')}
+          onPress={() => navigation.navigate('ModeSelect')}
           activeOpacity={0.85}
         >
           <Text style={styles.primaryCardIcon}>✏️</Text>

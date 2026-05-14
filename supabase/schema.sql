@@ -35,6 +35,7 @@ create table if not exists user_kanji (
   jlpt_level text check (jlpt_level in ('N5','N4','N3','N2','N1','unknown')),
   seen_count int not null default 0,  -- times written correctly in a completed round
   skip_count int not null default 0,  -- times the sentence containing this kanji was skipped
+  mastery text check (mastery in ('○', '△', '×')),  -- ○=mastered(blue) △=learning(green) ×=not-learned(grey)
   first_seen_at timestamptz not null default now(),
   last_seen_at timestamptz not null default now(),
   unique (user_id, kanji)

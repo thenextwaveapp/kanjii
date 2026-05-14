@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,9 +7,12 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   SafeAreaView,
+  TextInput,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { fetchKanji, fetchUserSentences } from '../services/progress';
+import { toRomaji, toHiragana } from 'wanakana';
+import { supabase } from '../services/supabase';
 
 const KANJI_TABS = ['All', 'Needs work', 'Mastered'];
 const KANJI_RE = /[\u4E00-\u9FFF\u3400-\u4DBF]/g;
@@ -18,10 +21,11 @@ function extractKanjiChars(text) {
   return [...new Set((text || '').match(KANJI_RE) || [])];
 }
 
-function masteryLevel(k) {
-  if (k.seen_count === 0) return 'unseen';
-  if (k.seen_count >= 8) return 'mastered';
-  return 'learning';
+function getMasteryColor(mastery) {
+  if (mastery === '○') return '#4A90E2'; // Blue for mastered
+  if (mastery === '△') return '#4CAF50'; // Green for learning
+  if (mastery === '×') return '#888'; // Grey for not learned
+  return '#444'; // Default grey if no mastery set
 }
 
 export default function StudyScreen({ navigation, user }) {
@@ -30,6 +34,9 @@ export default function StudyScreen({ navigation, user }) {
   const [sentences, setSentences] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('All');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searching, setSearching] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -46,10 +53,105 @@ export default function StudyScreen({ navigation, user }) {
     }, [user?.id])
   );
 
-  const filteredKanji = kanjiList.filter((k) => {
-    if (activeTab === 'All') return true;
-    if (activeTab === 'Needs work') return k.skip_count > k.seen_count || k.seen_count < 3;
-    if (activeTab === 'Mastered') return k.seen_count >= 8;
+  // Search database when query changes
+  useEffect(() => {
+    const searchDatabase = async () => {
+      if (!searchQuery.trim()) {
+        setSearchResults([]);
+        setSearching(false);
+        return;
+      }
+
+      setSearching(true);
+      const query = searchQuery.toLowerCase();
+      const hiraganaQuery = toHiragana(query);
+
+      // Search kanji_dictionary for matches
+      // 1. Search in kanji character directly
+      const { data: kanjiMatches } = await supabase
+        .from('kanji_dictionary')
+        .select('kanji, meanings, readings')
+        .ilike('kanji', `%${query}%`)
+        .limit(50);
+
+      // 2. Search in meanings array
+      const { data: meaningMatches } = await supabase
+        .rpc('search_kanji_meanings', { search_query: query })
+        .limit(50);
+
+      // 3. Search in readings with both original query AND hiragana version
+      // This handles both romaji in DB ('kuruma') and hiragana ('くるま')
+      const searches = [query];
+      if (hiraganaQuery !== query) {
+        searches.push(hiraganaQuery);
+      }
+
+      const readingResults = await Promise.all(
+        searches.map(q =>
+          supabase
+            .rpc('search_kanji_readings', { search_query: q })
+            .limit(50)
+        )
+      );
+
+      const readingMatches = readingResults.flatMap(r => r.data || []);
+
+      // Combine all results (remove duplicates)
+      const seen = new Set();
+      const dictResults = [];
+
+      [...(kanjiMatches || []), ...(meaningMatches || []), ...(readingMatches || [])].forEach(k => {
+        if (!seen.has(k.kanji)) {
+          seen.add(k.kanji);
+          dictResults.push(k);
+        }
+      });
+
+      // Merge user progress with dictionary results
+      const userKanjiMap = new Map(kanjiList.map(k => [k.kanji, k]));
+
+      const merged = (dictResults || []).map(dictKanji => {
+        const userKanji = userKanjiMap.get(dictKanji.kanji);
+        if (userKanji) {
+          // User has this kanji - use their data
+          return userKanji;
+        } else {
+          // New kanji - use dictionary data with default values
+          return {
+            kanji: dictKanji.kanji,
+            meanings: dictKanji.meanings || [],
+            readings: dictKanji.readings || [],
+            seen_count: 0,
+            skip_count: 0,
+            mastery: null,
+            jlpt_level: 'unknown',
+          };
+        }
+      });
+
+      setSearchResults(merged);
+      setSearching(false);
+    };
+
+    const debounce = setTimeout(searchDatabase, 300);
+    return () => clearTimeout(debounce);
+  }, [searchQuery, kanjiList]);
+
+  // Use search results if searching, otherwise filter user's kanji
+  const displayList = searchQuery.trim() ? searchResults : kanjiList;
+
+  const filteredKanji = displayList.filter((k) => {
+    // Skip tab filter when searching (show all results)
+    if (searchQuery.trim()) return true;
+
+    // Apply tab filter for user's kanji
+    if (activeTab === 'Needs work' && !(k.mastery === '×' || k.mastery === '△' || !k.mastery)) {
+      return false;
+    }
+    if (activeTab === 'Mastered' && k.mastery !== '○') {
+      return false;
+    }
+
     return true;
   });
 
@@ -87,6 +189,29 @@ export default function StudyScreen({ navigation, user }) {
         <Text style={styles.logo}>Kanj<Text style={styles.logoAccent}>ii</Text></Text>
       </View>
 
+      {/* Search bar */}
+      {mode === 'kanji' && (
+        <View style={styles.searchContainer}>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search kanji, meaning, or reading..."
+            placeholderTextColor="#555"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity
+              style={styles.searchClear}
+              onPress={() => setSearchQuery('')}
+            >
+              <Text style={styles.searchClearText}>✕</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
       {/* Mode toggle */}
       <View style={styles.modeRow}>
         <TouchableOpacity
@@ -121,8 +246,11 @@ export default function StudyScreen({ navigation, user }) {
         </TouchableOpacity>
       </View>
 
-      {loading ? (
-        <View style={styles.center}><ActivityIndicator color="#E85D3A" /></View>
+      {(loading || searching) ? (
+        <View style={styles.center}>
+          <ActivityIndicator color="#E85D3A" />
+          {searching && <Text style={styles.searchingText}>Searching...</Text>}
+        </View>
       ) : mode === 'kanji' ? (
         <KanjiView
           kanjiList={kanjiList}
@@ -189,23 +317,57 @@ function KanjiView({ kanjiList, filtered, activeTab, setActiveTab, weakKanji, on
               onPress={() => navigation.navigate('KanjiDetail', { kanji: k.kanji })}
               activeOpacity={0.8}
             >
-              <View style={styles.kanjiCardLeft}>
-                <Text style={styles.kanjiChar}>{k.kanji}</Text>
-                {k.readings?.[0] && (
-                  <Text style={styles.reading}>{k.readings[0]}</Text>
-                )}
+              <View style={styles.kanjiCardTop}>
+                <View style={styles.kanjiCardLeft}>
+                  <Text style={styles.kanjiChar}>{k.kanji}</Text>
+                </View>
+                <View style={styles.kanjiCardRight}>
+                  {k.jlpt_level && k.jlpt_level !== 'unknown' && (
+                    <View style={styles.jlptBadge}>
+                      <Text style={styles.jlptText}>{k.jlpt_level}</Text>
+                    </View>
+                  )}
+                  <View style={styles.statsRow}>
+                    <View style={styles.statItem}>
+                      <Text style={styles.statValue}>{k.seen_count}</Text>
+                      <Text style={styles.statLabel}>✓</Text>
+                    </View>
+                    <View style={styles.statDividerSmall} />
+                    <View style={styles.statItem}>
+                      <Text style={styles.statValue}>{k.skip_count}</Text>
+                      <Text style={styles.statLabel}>⊘</Text>
+                    </View>
+                  </View>
+                  {k.mastery && (
+                    <Text style={[styles.masterySymbol, { color: getMasteryColor(k.mastery) }]}>
+                      {k.mastery}
+                    </Text>
+                  )}
+                </View>
               </View>
-              <View style={styles.kanjiCardMiddle}>
-                <Text style={styles.meaning} numberOfLines={2}>
-                  {k.meanings?.[0] || '—'}
+
+              {/* Readings */}
+              {k.readings?.length > 0 && (
+                <View style={styles.readingsRow}>
+                  {k.readings.slice(0, 4).map((reading, idx) => (
+                    <View key={idx} style={styles.readingPill}>
+                      <Text style={styles.readingText}>{reading}</Text>
+                    </View>
+                  ))}
+                  {k.readings.length > 4 && (
+                    <Text style={styles.moreReadings}>+{k.readings.length - 4}</Text>
+                  )}
+                </View>
+              )}
+
+              {/* Meanings */}
+              <View style={styles.meaningsContainer}>
+                <Text style={styles.meanings} numberOfLines={2}>
+                  {k.meanings?.slice(0, 3).join(', ') || '—'}
                 </Text>
-                {k.meanings?.length > 1 && (
-                  <Text style={styles.moreMeanings}>+{k.meanings.length - 1} more</Text>
+                {k.meanings?.length > 3 && (
+                  <Text style={styles.moreMeanings}> +{k.meanings.length - 3}</Text>
                 )}
-              </View>
-              <View style={styles.kanjiCardRight}>
-                <StatPill value={k.seen_count} label="written" color="#4CAF50" />
-                <StatPill value={k.skip_count} label="skipped" color="#555" />
               </View>
             </TouchableOpacity>
           )}
@@ -235,48 +397,41 @@ function SentencesView({ sentences, onPractice, navigation }) {
       contentContainerStyle={styles.list}
       renderItem={({ item: s }) => {
         const kanjiChars = extractKanjiChars(s.japanese);
-        const firstTry = s.attempts === 1;
         return (
           <TouchableOpacity
-            style={[styles.sentenceCard, firstTry && styles.sentenceCardFirstTry]}
+            style={styles.sentenceCard}
             onPress={() => onPractice(s)}
             activeOpacity={0.8}
           >
-            {/* Attempt badge */}
-            <View style={styles.sentenceTop}>
-              {firstTry ? (
-                <View style={styles.firstTryBadge}>
-                  <Text style={styles.firstTryText}>First try</Text>
-                </View>
-              ) : (
-                <View style={styles.attemptsBadge}>
-                  <Text style={styles.attemptsText}>{s.attempts}× attempts</Text>
-                </View>
-              )}
-            </View>
-
-            <Text style={styles.sentenceJapanese}>{s.japanese}</Text>
-            <Text style={styles.sentenceEnglish} numberOfLines={2}>{s.english}</Text>
-
             {/* Kanji chips */}
             {kanjiChars.length > 0 && (
-              <View style={styles.kanjiChips}>
-                {kanjiChars.map((ch) => (
+              <View style={styles.kanjiChipsRow}>
+                {kanjiChars.slice(0, 6).map((ch) => (
                   <TouchableOpacity
                     key={ch}
-                    style={styles.kanjiChip}
+                    style={styles.kanjiChipSmall}
                     onPress={(e) => {
                       e.stopPropagation?.();
                       navigation.navigate('KanjiDetail', { kanji: ch });
                     }}
                   >
-                    <Text style={styles.kanjiChipText}>{ch}</Text>
+                    <Text style={styles.kanjiChipTextSmall}>{ch}</Text>
                   </TouchableOpacity>
                 ))}
+                {kanjiChars.length > 6 && (
+                  <Text style={styles.moreKanji}>+{kanjiChars.length - 6}</Text>
+                )}
               </View>
             )}
 
-            <Text style={styles.practiceHint}>Tap to practice →</Text>
+            {/* Japanese and English */}
+            <Text style={styles.sentenceJapanese}>{s.japanese}</Text>
+            <Text style={styles.sentenceEnglish}>{s.english}</Text>
+
+            {/* Practice hint */}
+            <View style={styles.sentenceFooter}>
+              <Text style={styles.practiceHint}>Tap to practice →</Text>
+            </View>
           </TouchableOpacity>
         );
       }}
@@ -303,6 +458,34 @@ const styles = StyleSheet.create({
   backText: { color: '#555', fontSize: 14 },
   logo: { fontSize: 20, color: '#EFEFEF', fontWeight: '800', letterSpacing: -0.5 },
   logoAccent: { color: '#E85D3A' },
+  searchContainer: {
+    paddingHorizontal: 24,
+    paddingBottom: 12,
+    position: 'relative',
+  },
+  searchInput: {
+    backgroundColor: '#111',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#222',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    color: '#EFEFEF',
+    fontSize: 15,
+  },
+  searchClear: {
+    position: 'absolute',
+    right: 32,
+    top: 12,
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  searchClearText: {
+    color: '#555',
+    fontSize: 16,
+  },
   modeRow: {
     flexDirection: 'row',
     paddingHorizontal: 24,
@@ -347,47 +530,178 @@ const styles = StyleSheet.create({
   },
   drillButtonText: { color: '#fff', fontSize: 14, fontWeight: '700', letterSpacing: 0.3 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
+  searchingText: { color: '#555', fontSize: 13, marginTop: 8 },
   emptyTitle: { color: '#EFEFEF', fontSize: 18, fontWeight: '700' },
   emptyText: { color: '#555', fontSize: 13, textAlign: 'center', paddingHorizontal: 40 },
   list: { padding: 16 },
   separator: { height: 8 },
   kanjiCard: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#111', borderRadius: 14, borderWidth: 1, borderColor: '#1A1A1A',
-    padding: 16, gap: 12,
+    backgroundColor: '#111',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#1A1A1A',
+    padding: 14,
+    gap: 10,
   },
-  kanjiCardLeft: { alignItems: 'center', width: 48 },
-  kanjiChar: { fontSize: 32, color: '#EFEFEF' },
-  reading: { fontSize: 10, color: '#E85D3A', marginTop: 2 },
-  kanjiCardMiddle: { flex: 1 },
-  meaning: { color: '#EFEFEF', fontSize: 14, fontWeight: '500' },
-  moreMeanings: { color: '#444', fontSize: 11, marginTop: 2 },
-  kanjiCardRight: { gap: 6, alignItems: 'flex-end' },
+  kanjiCardTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  kanjiCardLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  kanjiChar: {
+    fontSize: 40,
+    color: '#EFEFEF',
+    fontWeight: '400',
+    lineHeight: 40,
+  },
+  kanjiCardRight: {
+    alignItems: 'flex-end',
+    gap: 6,
+  },
+  jlptBadge: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#333',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  jlptText: {
+    color: '#E85D3A',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  statItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  statValue: {
+    color: '#EFEFEF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  statLabel: {
+    color: '#555',
+    fontSize: 11,
+  },
+  statDividerSmall: {
+    width: 1,
+    height: 12,
+    backgroundColor: '#333',
+  },
+  masterySymbol: {
+    fontSize: 22,
+    fontWeight: '700',
+  },
+  readingsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 5,
+    alignItems: 'center',
+  },
+  readingPill: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#333',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  readingText: {
+    color: '#E85D3A',
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
+  moreReadings: {
+    color: '#555',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  meaningsContainer: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    flexWrap: 'wrap',
+  },
+  meanings: {
+    color: '#AAA',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '400',
+  },
+  moreMeanings: {
+    color: '#555',
+    fontSize: 11,
+    fontWeight: '600',
+  },
   pill: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   pillValue: { fontSize: 14, fontWeight: '700' },
   pillLabel: { fontSize: 10, color: '#444' },
   sentenceCard: {
-    backgroundColor: '#111', borderRadius: 14, borderWidth: 1, borderColor: '#1A1A1A',
-    padding: 16, gap: 8,
+    backgroundColor: '#111',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#1A1A1A',
+    padding: 18,
+    gap: 12,
   },
-  sentenceCardFirstTry: { borderColor: '#1E3320' },
-  sentenceTop: { flexDirection: 'row' },
-  firstTryBadge: {
-    backgroundColor: '#1E3320', borderRadius: 6, borderWidth: 1, borderColor: '#2D5030',
-    paddingHorizontal: 8, paddingVertical: 3,
+  kanjiChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    alignItems: 'center',
   },
-  firstTryText: { color: '#4CAF50', fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
-  attemptsBadge: {
-    backgroundColor: '#1A1A1A', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3,
+  kanjiChipSmall: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#333',
+    width: 26,
+    height: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  attemptsText: { color: '#444', fontSize: 10, fontWeight: '600' },
-  sentenceJapanese: { color: '#EFEFEF', fontSize: 19, lineHeight: 28 },
-  sentenceEnglish: { color: '#555', fontSize: 13, lineHeight: 18 },
-  kanjiChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 2 },
-  kanjiChip: {
-    backgroundColor: '#1A1A1A', borderRadius: 8, borderWidth: 1, borderColor: '#333',
-    paddingHorizontal: 10, paddingVertical: 4,
+  kanjiChipTextSmall: {
+    color: '#E85D3A',
+    fontSize: 14,
+    fontWeight: '600',
   },
-  kanjiChipText: { color: '#E85D3A', fontSize: 16, fontWeight: '600' },
-  practiceHint: { color: '#E85D3A', fontSize: 12, fontWeight: '600', marginTop: 2 },
+  moreKanji: {
+    color: '#555',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  sentenceJapanese: {
+    color: '#EFEFEF',
+    fontSize: 20,
+    lineHeight: 32,
+    fontWeight: '400',
+  },
+  sentenceEnglish: {
+    color: '#888',
+    fontSize: 14,
+    lineHeight: 22,
+    fontWeight: '400',
+  },
+  sentenceFooter: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 4,
+  },
+  practiceHint: {
+    color: '#666',
+    fontSize: 12,
+    fontWeight: '600',
+  },
 });

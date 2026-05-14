@@ -15,6 +15,7 @@ import SnippetCard from '../components/SnippetCard';
 import TypingInput from '../components/TypingInput';
 import { fetchSentence, fetchTargetedSentence } from '../services/sentences';
 import { recordCompletion, recordSkip } from '../services/progress';
+import { fetchLessonSentences, updateLessonProgress } from '../services/collections';
 
 export default function PracticeScreen({ navigation, route, user }) {
   const {
@@ -23,11 +24,17 @@ export default function PracticeScreen({ navigation, route, user }) {
     domain = 'Any',
     reviewKanji = null,   // string[] — drill mode, targeted sentences
     singleSentence = null, // sentence object — one-round re-practice from Study
+    lessonId = null,       // UUID — lesson mode, ordered sentences
+    lessonName = null,     // string — lesson name for display
+    collectionName = null, // string — collection name for display
   } = route?.params || {};
 
-  const totalRounds = singleSentence ? 1 : rounds;
+  const isLesson = !!lessonId;
   const isDrill = !!reviewKanji && reviewKanji.length > 0;
   const isSingle = !!singleSentence;
+
+  const [lessonSentences, setLessonSentences] = useState([]);
+  const totalRounds = isSingle ? 1 : isLesson ? lessonSentences.length : rounds;
 
   const [sentence, setSentence] = useState(isSingle ? singleSentence : null);
   const [loading, setLoading] = useState(!isSingle);
@@ -48,9 +55,26 @@ export default function PracticeScreen({ navigation, route, user }) {
     setAttempts(0);
     roundStart.current = Date.now();
     try {
-      const data = isDrill
-        ? await fetchTargetedSentence(reviewKanji)
-        : await fetchSentence(user?.id, difficulty, domain);
+      let data;
+
+      if (isLesson) {
+        // Lesson mode: get next sentence from ordered list
+        const nextIndex = currentRound - 1;
+        if (nextIndex < lessonSentences.length) {
+          data = lessonSentences[nextIndex];
+        } else {
+          throw new Error('No more sentences in this lesson');
+        }
+      } else if (isDrill) {
+        data = await fetchTargetedSentence(reviewKanji);
+      } else {
+        data = await fetchSentence(user?.id, difficulty, domain);
+      }
+
+      if (!data) {
+        throw new Error('No sentences available in database for this selection');
+      }
+
       setSentence(data);
     } catch (e) {
       setError(e.message);
@@ -60,29 +84,69 @@ export default function PracticeScreen({ navigation, route, user }) {
   };
 
   useEffect(() => {
-    if (!isSingle) loadSentence();
-    else roundStart.current = Date.now();
+    async function initialize() {
+      if (isLesson) {
+        // Load all lesson sentences first
+        try {
+          const sentences = await fetchLessonSentences(lessonId);
+          setLessonSentences(sentences);
+          if (sentences.length > 0) {
+            setSentence(sentences[0]);
+            roundStart.current = Date.now();
+          } else {
+            setError('This lesson has no sentences yet');
+          }
+        } catch (e) {
+          setError('Failed to load lesson');
+        } finally {
+          setLoading(false);
+        }
+      } else if (!isSingle) {
+        loadSentence();
+      } else {
+        roundStart.current = Date.now();
+      }
+    }
+    initialize();
   }, []);
 
-  const finishSession = (results) => {
+  const finishSession = async (results) => {
     if (isSingle) {
       navigation.goBack();
       return;
     }
+
+    // Update lesson progress if in lesson mode
+    if (isLesson && user?.id) {
+      try {
+        await updateLessonProgress({
+          userId: user.id,
+          lessonId,
+          sentenceResults: results,
+        });
+      } catch (e) {
+        console.error('Failed to update lesson progress:', e);
+      }
+    }
+
     navigation.replace('Summary', {
       results,
       sessionStart: sessionStart.current,
       rounds: totalRounds,
-      difficulty: isDrill ? 'Drill' : difficulty,
-      domain: isDrill ? 'Weak kanji' : domain,
+      difficulty: isLesson ? lessonName : isDrill ? 'Drill' : difficulty,
+      domain: isLesson ? collectionName : isDrill ? 'Weak kanji' : domain,
     });
   };
 
-  const handleMatch = async () => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
+  const handleMatch = async (grade) => {
     const elapsed = Date.now() - roundStart.current;
-    roundResults.current.push({ round: currentRound, skipped: false, timeMs: elapsed, sentence });
+    roundResults.current.push({
+      round: currentRound,
+      skipped: false,
+      timeMs: elapsed,
+      sentence,
+      grade, // ○, △, or ×
+    });
 
     if (user?.id) {
       await recordCompletion({
@@ -90,6 +154,8 @@ export default function PracticeScreen({ navigation, route, user }) {
         sentenceId: sentence?.id,
         words: sentence?.words,
         attempts: attempts + 1,
+        grade, // Pass grade to progress service
+        jlptLevel: sentence?.jlpt_level, // Pass sentence JLPT level for kanji tracking
       });
     }
 
@@ -104,10 +170,20 @@ export default function PracticeScreen({ navigation, route, user }) {
 
   const handleSkip = async () => {
     const elapsed = Date.now() - roundStart.current;
-    roundResults.current.push({ round: currentRound, skipped: true, timeMs: elapsed, sentence });
+    roundResults.current.push({
+      round: currentRound,
+      skipped: true,
+      timeMs: elapsed,
+      sentence,
+      grade: '×', // Skip = × (batsu)
+    });
 
     if (user?.id && sentence?.words) {
-      await recordSkip({ userId: user.id, words: sentence.words });
+      await recordSkip({
+        userId: user.id,
+        words: sentence.words,
+        jlptLevel: sentence?.jlpt_level, // Pass sentence JLPT level for kanji tracking
+      });
     }
 
     if (currentRound >= totalRounds) {
@@ -123,12 +199,16 @@ export default function PracticeScreen({ navigation, route, user }) {
 
   const headerLabel = isSingle
     ? 'Re-practice'
+    : isLesson
+    ? `${currentRound} / ${totalRounds}`
     : isDrill
     ? `Drill · ${currentRound}/${totalRounds}`
     : `${currentRound} / ${totalRounds}`;
 
   const badgeLabel = isSingle
     ? 'Single round'
+    : isLesson
+    ? lessonName
     : isDrill
     ? 'Weak kanji'
     : `${difficulty}${domain !== 'Any' ? ` · ${domain}` : ''}`;

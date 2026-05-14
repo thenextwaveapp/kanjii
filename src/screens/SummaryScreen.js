@@ -24,12 +24,27 @@ function longestCorrectStreak(results) {
   return max;
 }
 
+function getGradeColor(grade) {
+  if (grade === '○') return '#4A90E2'; // Blue for perfect
+  if (grade === '△') return '#4CAF50'; // Green for good
+  if (grade === '×') return '#888'; // Grey for wrong/skip
+  return '#444'; // Default
+}
+
+function getGradeLabel(grade) {
+  if (grade === '○') return 'perfect';
+  if (grade === '△') return 'good';
+  if (grade === '×') return 'skipped';
+  return 'unknown';
+}
+
 export default function SummaryScreen({ navigation, route, user }) {
   const { results = [], sessionStart, rounds, difficulty, domain = 'Any' } = route.params || {};
   const [newKanji, setNewKanji] = useState([]);
 
-  const correct = results.filter((r) => !r.skipped).length;
-  const skipped = results.filter((r) => r.skipped).length;
+  const perfect = results.filter((r) => r.grade === '○').length;
+  const good = results.filter((r) => r.grade === '△').length;
+  const skipped = results.filter((r) => r.grade === '×' || r.skipped).length;
   const streak = longestCorrectStreak(results);
   const avgTime = results.length > 0
     ? results.reduce((s, r) => s + r.timeMs, 0) / results.length
@@ -52,8 +67,11 @@ export default function SummaryScreen({ navigation, route, user }) {
 
         {/* Top stats */}
         <View style={styles.statsRow}>
-          <StatBox label="Correct" value={correct} total={rounds} accent />
-          <StatBox label="Skipped" value={skipped} total={rounds} />
+          <StatBox label="○ Perfect" value={perfect} total={rounds} accent color="#4A90E2" />
+          <StatBox label="△ Good" value={good} total={rounds} color="#4CAF50" />
+          <StatBox label="× Skipped" value={skipped} total={rounds} color="#888" />
+        </View>
+        <View style={styles.statsRow}>
           <StatBox label="Best streak" value={streak} />
           <StatBox label="Avg. time" value={formatTime(avgTime)} raw />
         </View>
@@ -61,14 +79,20 @@ export default function SummaryScreen({ navigation, route, user }) {
         {/* Per-round breakdown */}
         <Text style={styles.sectionLabel}>Rounds</Text>
         <View style={styles.roundList}>
-          {results.map((r, i) => (
-            <View key={i} style={styles.roundRow}>
-              <View style={[styles.roundDot, r.skipped ? styles.dotSkipped : styles.dotCorrect]} />
-              <Text style={styles.roundLabel}>Round {r.round}</Text>
-              <Text style={styles.roundTime}>{formatTime(r.timeMs)}</Text>
-              <Text style={styles.roundStatus}>{r.skipped ? 'skipped' : 'correct'}</Text>
-            </View>
-          ))}
+          {results.map((r, i) => {
+            const grade = r.grade || (r.skipped ? '×' : '○');
+            const gradeColor = getGradeColor(grade);
+            const gradeLabel = getGradeLabel(grade);
+
+            return (
+              <View key={i} style={styles.roundRow}>
+                <Text style={[styles.gradeSymbol, { color: gradeColor }]}>{grade}</Text>
+                <Text style={styles.roundLabel}>Round {r.round}</Text>
+                <Text style={styles.roundTime}>{formatTime(r.timeMs)}</Text>
+                <Text style={[styles.roundStatus, { color: gradeColor }]}>{gradeLabel}</Text>
+              </View>
+            );
+          })}
         </View>
 
         {/* New kanji encountered */}
@@ -109,10 +133,10 @@ export default function SummaryScreen({ navigation, route, user }) {
   );
 }
 
-function StatBox({ label, value, total, accent, raw }) {
+function StatBox({ label, value, total, accent, raw, color }) {
   return (
     <View style={styles.statBox}>
-      <Text style={[styles.statValue, accent && styles.statValueAccent]}>
+      <Text style={[styles.statValue, accent && styles.statValueAccent, color && { color }]}>
         {raw ? value : total !== undefined ? `${value}/${total}` : value}
       </Text>
       <Text style={styles.statLabel}>{label}</Text>
@@ -144,12 +168,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12,
     borderBottomWidth: 1, borderBottomColor: '#1A1A1A', gap: 10,
   },
-  roundDot: { width: 8, height: 8, borderRadius: 4 },
-  dotCorrect: { backgroundColor: '#4CAF50' },
-  dotSkipped: { backgroundColor: '#333' },
+  gradeSymbol: {
+    fontSize: 18,
+    fontWeight: '700',
+    width: 24,
+  },
   roundLabel: { color: '#EFEFEF', fontSize: 13, flex: 1 },
   roundTime: { color: '#555', fontSize: 12 },
-  roundStatus: { color: '#444', fontSize: 11, width: 50, textAlign: 'right' },
+  roundStatus: { fontSize: 11, width: 60, textAlign: 'right', fontWeight: '600' },
   kanjiRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 32 },
   newKanjiCard: {
     backgroundColor: '#111', borderRadius: 12, borderWidth: 1, borderColor: '#E85D3A',
