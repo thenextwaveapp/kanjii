@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { fetchKanji, fetchUserSentences } from '../services/progress';
-import { toRomaji, toHiragana } from 'wanakana';
+import { toHiragana } from 'wanakana';
 import { supabase } from '../services/supabase';
 import {
   fetchSentenceLists,
@@ -20,6 +20,9 @@ import {
   addSentenceToList,
   removeSentenceFromList,
 } from '../services/sentenceLists';
+import { speakJapanese, stopSpeaking } from '../services/tts';
+import { useSettings } from '../contexts/SettingsContext';
+import { VOICE_OPTIONS } from '../services/settings';
 
 const KANJI_TABS = ['All', 'Needs work', 'Mastered'];
 const KANJI_RE = /[\u4E00-\u9FFF\u3400-\u4DBF]/g;
@@ -123,7 +126,7 @@ export default function StudyScreen({ navigation, user }) {
         // 1. Search in kanji character directly
         const { data: kanjiMatches } = await supabase
           .from('kanji_dictionary')
-          .select('kanji, meanings, readings, readings_romaji')
+          .select('*')
           .ilike('kanji', `%${query}%`)
           .limit(50);
 
@@ -135,7 +138,7 @@ export default function StudyScreen({ navigation, user }) {
         // 3. Get all kanji and filter by exact reading match
         const { data: allKanji } = await supabase
           .from('kanji_dictionary')
-          .select('kanji, meanings, readings, readings_romaji')
+          .select('*')
           .limit(1000);
 
         // Filter for exact reading matches (hiragana or romaji)
@@ -196,28 +199,65 @@ export default function StudyScreen({ navigation, user }) {
         });
 
         // Sort by relevance (lower number = higher priority) and limit to top 20
-        const dictResults = allResults
+        let dictResults = allResults
           .sort((a, b) => a.relevance - b.relevance)
           .slice(0, 20);
+
+        // Fetch complete data for kanji that don't have readings (from RPC results)
+        const kanjiNeedingData = dictResults.filter(k => !k.readings || k.readings.length === 0).map(k => k.kanji);
+        if (kanjiNeedingData.length > 0) {
+          const { data: completeData } = await supabase
+            .from('kanji_dictionary')
+            .select('*')
+            .in('kanji', kanjiNeedingData);
+
+          const completeDataMap = new Map((completeData || []).map(d => [d.kanji, d]));
+
+          dictResults = dictResults.map(k => {
+            if (kanjiNeedingData.includes(k.kanji)) {
+              const complete = completeDataMap.get(k.kanji);
+              return complete ? { ...k, ...complete } : k;
+            }
+            return k;
+          });
+        }
 
         // Merge user progress with dictionary results
         const userKanjiMap = new Map(kanjiList.map(k => [k.kanji, k]));
 
         const merged = (dictResults || []).map(dictKanji => {
           const userKanji = userKanjiMap.get(dictKanji.kanji);
-          if (userKanji) {
-            return userKanji;
-          } else {
-            return {
-              kanji: dictKanji.kanji,
-              meanings: dictKanji.meanings || [],
-              readings: dictKanji.readings || [],
-              seen_count: 0,
-              skip_count: 0,
-              mastery: null,
-              jlpt_level: 'unknown',
-            };
-          }
+
+          // Normalize meanings to array (handle both string and array formats)
+          const normalizeMeanings = (m) => {
+            if (!m) return [];
+            if (Array.isArray(m)) return m;
+            return [m]; // Convert string to array
+          };
+
+          // Normalize and filter readings to remove null/undefined/empty values
+          const normalizeReadings = (r) => {
+            if (!r) return [];
+            if (Array.isArray(r)) return r.filter(reading => reading && typeof reading === 'string' && reading.trim());
+            if (typeof r === 'string' && r.trim()) return [r];
+            return [];
+          };
+
+          const normalizedReadings = normalizeReadings(dictKanji.readings);
+          const normalizedMeanings = normalizeMeanings(dictKanji.meanings);
+
+          // Always use dictionary data from search results, merge with user data if available
+          return {
+            ...(userKanji || {}),
+            kanji: dictKanji.kanji,
+            dictReadings: normalizedReadings,
+            dictMeanings: normalizedMeanings,
+            // For new kanji without user data, set defaults
+            seen_count: userKanji?.seen_count ?? 0,
+            skip_count: userKanji?.skip_count ?? 0,
+            mastery: userKanji?.mastery ?? null,
+            jlpt_level: dictKanji.jlpt_level || userKanji?.jlpt_level || 'unknown',
+          };
         });
 
         setSearchResults(merged);
@@ -446,6 +486,62 @@ export default function StudyScreen({ navigation, user }) {
 }
 
 function KanjiView({ kanjiList, filtered, activeTab, setActiveTab, weakKanji, onDrill, navigation }) {
+  const { settings } = useSettings();
+  const [playingKanji, setPlayingKanji] = React.useState(null);
+  const [currentSound, setCurrentSound] = React.useState(null);
+
+  const handleReadingsPress = async (kanji, readings, e) => {
+    e?.stopPropagation();
+
+    if (!readings || readings.length === 0) return;
+
+    // Stop current sound if playing
+    if (currentSound) {
+      await stopSpeaking(currentSound);
+      setCurrentSound(null);
+      setPlayingKanji(null);
+    }
+
+    try {
+      const voiceConfig = VOICE_OPTIONS.find(v => v.value === settings.voiceGender);
+      setPlayingKanji(kanji);
+
+      // Play first 3 readings in sequence
+      for (let i = 0; i < Math.min(3, readings.length); i++) {
+        const reading = readings[i];
+        const hiraganaReading = toHiragana(reading);
+
+        const sound = await speakJapanese(hiraganaReading, {
+          voice: voiceConfig?.voice,
+          rate: settings.speechRate,
+        });
+
+        setCurrentSound(sound);
+
+        // Wait for sound to finish
+        await new Promise((resolve) => {
+          sound.setOnPlaybackStatusUpdate((status) => {
+            if (status.didJustFinish) {
+              resolve();
+            }
+          });
+        });
+
+        // Small pause between readings
+        if (i < Math.min(3, readings.length) - 1) {
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
+      }
+
+      setPlayingKanji(null);
+      setCurrentSound(null);
+    } catch (error) {
+      console.error('TTS error:', error);
+      setPlayingKanji(null);
+      setCurrentSound(null);
+    }
+  };
+
   return (
     <>
       {/* Sub-tabs */}
@@ -493,6 +589,28 @@ function KanjiView({ kanjiList, filtered, activeTab, setActiveTab, weakKanji, on
               <View style={styles.kanjiCardTop}>
                 <View style={styles.kanjiCardLeft}>
                   <Text style={styles.kanjiChar}>{k.kanji}</Text>
+                  {k.dictReadings && k.dictReadings.length > 0 && (
+                    <TouchableOpacity
+                      style={styles.cardReadingsContainer}
+                      onPress={(e) => handleReadingsPress(k.kanji, k.dictReadings, e)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.cardReadingsRow}>
+                        <Text style={[
+                          styles.cardReadings,
+                          playingKanji === k.kanji && styles.cardReadingsPlaying
+                        ]}>
+                          {k.dictReadings.slice(0, 3).map(r => toHiragana(r)).join('・')}
+                        </Text>
+                        <Text style={styles.cardSpeakerIcon}>🔊</Text>
+                      </View>
+                      {k.dictMeanings && k.dictMeanings.length > 0 && (
+                        <Text style={styles.cardMeanings}>
+                          {k.dictMeanings.slice(0, 2).join(', ')}
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  )}
                 </View>
                 <View style={styles.kanjiCardRight}>
                   {k.jlpt_level && k.jlpt_level !== 'unknown' && (
@@ -518,26 +636,6 @@ function KanjiView({ kanjiList, filtered, activeTab, setActiveTab, weakKanji, on
                   )}
                 </View>
               </View>
-
-              {/* Example word chips */}
-              {k.exampleWords && k.exampleWords.length > 0 && (
-                <View style={styles.readingsRow}>
-                  {k.exampleWords.slice(0, 3).map((w, idx) => (
-                    <View key={idx} style={styles.readingChip}>
-                      <Text style={styles.readingChipKanji}>{w.word}</Text>
-                      <Text style={styles.readingChipFurigana}>{w.furigana}</Text>
-                      {w.meaning && (
-                        <Text style={styles.readingChipMeaning} numberOfLines={1}>
-                          {w.meaning}
-                        </Text>
-                      )}
-                    </View>
-                  ))}
-                  {k.exampleWords.length > 3 && (
-                    <Text style={styles.moreReadings}>+{k.exampleWords.length - 3}</Text>
-                  )}
-                </View>
-              )}
             </TouchableOpacity>
           )}
           ItemSeparatorComponent={() => <View style={styles.separator} />}
@@ -791,8 +889,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     borderColor: '#1A1A1A',
-    padding: 14,
-    gap: 10,
+    padding: 16,
   },
   kanjiCardTop: {
     flexDirection: 'row',
@@ -800,14 +897,43 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   kanjiCardLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 6,
+    flex: 1,
   },
   kanjiChar: {
-    fontSize: 40,
+    fontSize: 48,
     color: '#EFEFEF',
     fontWeight: '400',
-    lineHeight: 40,
+    lineHeight: 48,
+  },
+  cardReadingsContainer: {
+    gap: 3,
+  },
+  cardReadingsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  cardReadings: {
+    fontSize: 12,
+    color: '#E85D3A',
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    flexShrink: 0,
+  },
+  cardReadingsPlaying: {
+    opacity: 0.6,
+  },
+  cardSpeakerIcon: {
+    fontSize: 11,
+    opacity: 0.4,
+  },
+  cardMeanings: {
+    fontSize: 11,
+    color: '#777',
+    letterSpacing: 0.2,
   },
   kanjiCardRight: {
     alignItems: 'flex-end',

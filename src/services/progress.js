@@ -277,13 +277,20 @@ export async function fetchKanjiDetail(userId, kanji) {
   let mergedData = null;
   if (kanjiData) {
     // User has practiced this kanji - use their data
-    mergedData = kanjiData;
+    mergedData = {
+      ...kanjiData,
+      // Always include dictionary readings/meanings separately
+      dictReadings: dictData?.readings || [],
+      dictMeanings: dictData?.meanings || [],
+    };
   } else if (dictData) {
     // New kanji - use dictionary data with default stats
     mergedData = {
       kanji: dictData.kanji,
       meanings: dictData.meanings || [],
       readings: dictData.readings || [],
+      dictReadings: dictData.readings || [],
+      dictMeanings: dictData.meanings || [],
       jlpt_level: 'unknown',
       seen_count: 0,
       skip_count: 0,
@@ -393,12 +400,28 @@ export async function fetchKanji(userId) {
 
   if (!data || data.length === 0) return [];
 
-  // Fetch example words for each kanji from sentences
+  // Fetch example words and dictionary data for each kanji
   const kanjiList = data.map(k => k.kanji);
-  const { data: sentences } = await supabase
-    .from('sentences')
-    .select('words')
-    .limit(500); // Get a reasonable sample
+
+  // Fetch sentences
+  const { data: sentences } = await supabase.from('sentences').select('words').limit(500);
+
+  // Fetch dictionary data in chunks to avoid .in() limits
+  const chunkSize = 100;
+  const dictDataChunks = [];
+  for (let i = 0; i < kanjiList.length; i += chunkSize) {
+    const chunk = kanjiList.slice(i, i + chunkSize);
+    const { data: chunkData } = await supabase
+      .from('kanji_dictionary')
+      .select('kanji, readings, meanings')
+      .in('kanji', chunk);
+    if (chunkData) {
+      dictDataChunks.push(...chunkData);
+    }
+  }
+
+  // Build a map of kanji -> dictionary data
+  const dictMap = new Map(dictDataChunks.map(d => [d.kanji, d]));
 
   // Build a map of kanji -> example words
   const exampleWordsMap = {};
@@ -423,9 +446,24 @@ export async function fetchKanji(userId) {
     });
   });
 
-  // Add exampleWords to each kanji
-  return data.map(k => ({
-    ...k,
-    exampleWords: exampleWordsMap[k.kanji] || []
-  }));
+  // Add exampleWords and dictionary data to each kanji
+  return data.map(k => {
+    const dict = dictMap.get(k.kanji);
+    // Filter out null/undefined/empty readings
+    const readings = dict?.readings || [];
+    const filteredReadings = Array.isArray(readings)
+      ? readings.filter(r => r && typeof r === 'string' && r.trim())
+      : [];
+    const meanings = dict?.meanings || [];
+    const filteredMeanings = Array.isArray(meanings)
+      ? meanings.filter(m => m && typeof m === 'string' && m.trim())
+      : [];
+
+    return {
+      ...k,
+      exampleWords: exampleWordsMap[k.kanji] || [],
+      dictReadings: filteredReadings,
+      dictMeanings: filteredMeanings
+    };
+  });
 }
