@@ -12,15 +12,15 @@ const JAPANESE_CHARS = [
   'ア', 'カ', 'サ', 'タ', 'ナ', 'ハ', 'マ', 'ヤ', 'ラ', 'ワ',
 ];
 
-function FallingChar({ char, delay, size, opacity, duration }) {
+function FallingChar({ char, delay, size, opacity, duration, areaHeight, areaWidth }) {
   const translateY = useRef(new Animated.Value(-100)).current;
-  const startX = useRef(Math.random() * width).current;
+  const startX = useRef(Math.random() * areaWidth).current;
 
   useEffect(() => {
     const animate = () => {
       translateY.setValue(-100);
       Animated.timing(translateY, {
-        toValue: height + 100,
+        toValue: areaHeight + 100,
         duration,
         delay,
         useNativeDriver: true,
@@ -29,7 +29,7 @@ function FallingChar({ char, delay, size, opacity, duration }) {
       });
     };
     animate();
-  }, [delay, duration, translateY]);
+  }, [areaHeight, delay, duration, translateY]);
 
   return (
     <Animated.View
@@ -47,9 +47,13 @@ function FallingChar({ char, delay, size, opacity, duration }) {
   );
 }
 
-export default function FallingCharacters() {
+export default function FallingCharacters({
+  count = 30,
+  areaHeight = height,
+  areaWidth = width,
+}) {
   const chars = useRef(
-    Array.from({ length: 30 }, (_, i) => ({
+    Array.from({ length: count }, (_, i) => ({
       id: i,
       char: JAPANESE_CHARS[Math.floor(Math.random() * JAPANESE_CHARS.length)],
       delay: Math.random() * 5000,
@@ -69,6 +73,8 @@ export default function FallingCharacters() {
           size={item.size}
           opacity={item.opacity}
           duration={item.duration}
+          areaHeight={areaHeight}
+          areaWidth={areaWidth}
         />
       ))}
     </View>

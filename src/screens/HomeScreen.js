@@ -24,29 +24,31 @@ export default function HomeScreen({ navigation, user }) {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <FallingCharacters />
-      {/* Top bar */}
-      <View style={styles.topBar}>
-        <View>
-          <Text style={styles.logo}>Kanj<Text style={styles.logoAccent}>ii</Text></Text>
-          <Text style={styles.greeting}>Good{greeting()}, {name}</Text>
-          {stats?.current_streak > 0 && (
-            <Text style={styles.streakLine}>{stats.current_streak} day streak 🔥</Text>
-          )}
-        </View>
-        <View style={styles.topActions}>
-          {user?.user_metadata?.avatar_url ? (
-            <TouchableOpacity onPress={() => navigation.navigate('Settings')}>
-              <Image source={{ uri: user.user_metadata.avatar_url }} style={styles.avatar} />
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              style={styles.iconButton}
-              onPress={() => navigation.navigate('Settings')}
-            >
-              <Text style={styles.avatarInitial}>{name[0].toUpperCase()}</Text>
-            </TouchableOpacity>
-          )}
+      <View style={styles.heroSection}>
+        <FallingCharacters count={16} areaHeight={140} />
+        {/* Top bar */}
+        <View style={styles.topBar}>
+          <View>
+            <Text style={styles.logo}>Kanj<Text style={styles.logoAccent}>ii</Text></Text>
+            <Text style={styles.greeting}>Good{greeting()}, {name}</Text>
+            {stats?.current_streak > 0 && (
+              <Text style={styles.streakLine}>{stats.current_streak} day streak 🔥</Text>
+            )}
+          </View>
+          <View style={styles.topActions}>
+            {user?.user_metadata?.avatar_url ? (
+              <TouchableOpacity onPress={() => navigation.navigate('Settings')}>
+                <Image source={{ uri: user.user_metadata.avatar_url }} style={styles.avatar} />
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={styles.iconButton}
+                onPress={() => navigation.navigate('Settings')}
+              >
+                <Text style={styles.avatarInitial}>{name[0].toUpperCase()}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
       </View>
 
@@ -115,6 +117,10 @@ function greeting() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#0A0A0A' },
+  heroSection: {
+    position: 'relative',
+    overflow: 'hidden',
+  },
   topBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',

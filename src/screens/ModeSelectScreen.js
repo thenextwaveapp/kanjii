@@ -19,7 +19,8 @@ export default function ModeSelectScreen({ navigation }) {
           <Text style={styles.logo}>Kanj<Text style={styles.logoAccent}>ii</Text></Text>
         </View>
 
-        <Text style={styles.title}>Choose practice mode</Text>
+        <Text style={styles.title}>Practice</Text>
+        <Text style={styles.subtitle}>Choose your learning path</Text>
 
         {/* Mode cards */}
         <View style={styles.modes}>
@@ -28,14 +29,13 @@ export default function ModeSelectScreen({ navigation }) {
             onPress={() => navigation.navigate('CollectionList')}
             activeOpacity={0.85}
           >
-            <Text style={styles.modeIcon}>📚</Text>
-            <Text style={styles.modeTitle}>Collections</Text>
-            <Text style={styles.modeSub}>
-              Curated lessons with progressive skillsets
-            </Text>
-            <View style={[styles.modeBadge, styles.modeBadgeAccent]}>
-              <Text style={styles.modeBadgeText}>STRUCTURED</Text>
+            <View style={[styles.iconContainer, styles.iconContainerAccent]}>
+              <Text style={styles.modeIcon}>📚</Text>
             </View>
+            <Text style={styles.modeTitle}>Structured Lessons</Text>
+            <Text style={styles.modeSub}>
+              Follow curated paths designed for progressive mastery
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -43,14 +43,13 @@ export default function ModeSelectScreen({ navigation }) {
             onPress={() => navigation.navigate('RoundSelect')}
             activeOpacity={0.85}
           >
-            <Text style={styles.modeIcon}>🎯</Text>
-            <Text style={styles.modeTitle}>Domain Practice</Text>
-            <Text style={styles.modeSub}>
-              Free practice by topic and difficulty
-            </Text>
-            <View style={styles.modeBadge}>
-              <Text style={styles.modeBadgeText}>FLEXIBLE</Text>
+            <View style={styles.iconContainer}>
+              <Text style={styles.modeIcon}>🎯</Text>
             </View>
+            <Text style={styles.modeTitle}>Topic Practice</Text>
+            <Text style={styles.modeSub}>
+              Choose any topic and difficulty level you want
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -65,57 +64,61 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 32,
+    marginBottom: 16,
   },
   backText: { color: '#555', fontSize: 14 },
   logo: { fontSize: 22, color: '#EFEFEF', fontWeight: '800', letterSpacing: -0.5 },
   logoAccent: { color: '#E85D3A' },
   title: {
     color: '#EFEFEF',
-    fontSize: 28,
+    fontSize: 32,
     fontWeight: '800',
     letterSpacing: -0.5,
-    marginBottom: 28,
+    marginBottom: 6,
   },
-  modes: { gap: 16 },
+  subtitle: {
+    color: '#666',
+    fontSize: 15,
+    marginBottom: 32,
+    letterSpacing: 0.2,
+  },
+  modes: {
+    gap: 20,
+    flex: 1,
+  },
   modeCard: {
     backgroundColor: '#111',
-    borderRadius: 20,
-    borderWidth: 1,
+    borderRadius: 24,
+    borderWidth: 1.5,
     borderColor: '#222',
-    padding: 28,
-    gap: 8,
+    padding: 24,
+    position: 'relative',
   },
-  modeIcon: { fontSize: 32, marginBottom: 4 },
+  iconContainer: {
+    width: 56,
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: '#1A1A1A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconContainerAccent: {
+    backgroundColor: '#E85D3A',
+  },
+  modeIcon: {
+    fontSize: 28,
+  },
   modeTitle: {
     color: '#EFEFEF',
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '800',
     letterSpacing: -0.5,
+    marginBottom: 8,
+    marginTop: 16,
   },
   modeSub: {
     color: '#888',
     fontSize: 14,
-    lineHeight: 20,
-  },
-  modeBadge: {
-    backgroundColor: '#1A1A1A',
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    alignSelf: 'flex-start',
-    marginTop: 8,
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  modeBadgeAccent: {
-    backgroundColor: 'rgba(232, 93, 58, 0.1)',
-    borderColor: '#E85D3A',
-  },
-  modeBadgeText: {
-    color: '#E85D3A',
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 1,
+    lineHeight: 21,
   },
 });

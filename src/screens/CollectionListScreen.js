@@ -58,9 +58,9 @@ export default function CollectionListScreen({ navigation, user }) {
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
-        <Text style={styles.title}>Collections</Text>
+        <Text style={styles.title}>Structured Lessons</Text>
         <Text style={styles.subtitle}>
-          Curated lessons to build specific skills
+          Curated paths to build specific skills
         </Text>
 
         {loading ? (
