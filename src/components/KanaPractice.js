@@ -10,6 +10,9 @@ import {
   Animated,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import { speakJapanese, stopSpeaking } from '../services/tts';
+import { useSettings } from '../contexts/SettingsContext';
+import { VOICE_OPTIONS } from '../services/settings';
 
 // Hiragana chart (basic 46)
 const HIRAGANA_BASIC = {
@@ -93,46 +96,47 @@ const KANA_SETS = {
 };
 
 export default function KanaPractice({ onClose }) {
+  const { settings } = useSettings();
   const [mode, setMode] = useState(null); // null | 'hiragana' | 'katakana' | 'hiragana-advanced' | 'katakana-advanced'
   const [currentKana, setCurrentKana] = useState('');
   const [correctRomaji, setCorrectRomaji] = useState('');
   const [userInput, setUserInput] = useState('');
-  const [score, setScore] = useState(0);
-  const [total, setTotal] = useState(0);
-  const [feedback, setFeedback] = useState(''); // 'correct' | 'wrong' | ''
-  const [remainingKana, setRemainingKana] = useState([]);
+  const [showAnswer, setShowAnswer] = useState(false);
+  const [currentSound, setCurrentSound] = useState(null);
 
   const inputRef = useRef(null);
-  const flashAnim = useRef(new Animated.Value(0)).current;
+  const glowAnim = useRef(new Animated.Value(0)).current;
+  const shakeAnim = useRef(new Animated.Value(0)).current;
+  const [isCorrectAnswer, setIsCorrectAnswer] = useState(null);
+
+  // Cleanup sound on unmount
+  useEffect(() => {
+    return () => {
+      if (currentSound) {
+        stopSpeaking(currentSound);
+      }
+    };
+  }, [currentSound]);
 
   // Initialize practice mode
   const startPractice = (selectedMode) => {
     setMode(selectedMode);
-    const kanaMap = KANA_SETS[selectedMode];
-    const kanaList = Object.keys(kanaMap);
-    const shuffled = [...kanaList].sort(() => Math.random() - 0.5);
-    setRemainingKana(shuffled);
-    loadNextKana(shuffled, kanaMap);
-    setScore(0);
-    setTotal(0);
+    loadNextKana(selectedMode);
   };
 
-  const loadNextKana = (kanaList, kanaMap) => {
-    if (kanaList.length === 0) {
-      // Practice complete
-      setCurrentKana('');
-      return;
-    }
-    const nextKana = kanaList[0];
-    setCurrentKana(nextKana);
-    setCorrectRomaji(kanaMap[nextKana]);
+  const loadNextKana = (selectedMode) => {
+    const kanaMap = KANA_SETS[selectedMode];
+    const kanaList = Object.keys(kanaMap);
+    const randomKana = kanaList[Math.floor(Math.random() * kanaList.length)];
+    setCurrentKana(randomKana);
+    setCorrectRomaji(kanaMap[randomKana]);
     setUserInput('');
-    setFeedback('');
+    setShowAnswer(false);
+    setIsCorrectAnswer(null);
     setTimeout(() => inputRef.current?.focus(), 100);
   };
 
-  const handleSubmit = () => {
-    const kanaMap = KANA_SETS[mode];
+  const handleSubmit = async () => {
     const input = userInput.toLowerCase().trim();
     const correct = correctRomaji.toLowerCase();
 
@@ -149,71 +153,112 @@ export default function KanaPractice({ onClose }) {
       input === correct ||
       (alternatives[correct] && alternatives[correct].includes(input));
 
-    setTotal(total + 1);
-
     if (isCorrect) {
-      setScore(score + 1);
-      setFeedback('correct');
+      setShowAnswer(true);
+      setIsCorrectAnswer(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-      // Flash green
+      // Speak the Japanese kana character
+      try {
+        if (currentSound) {
+          await stopSpeaking(currentSound);
+          setCurrentSound(null);
+        }
+
+        const voiceConfig = VOICE_OPTIONS.find(v => v.value === settings.voiceGender);
+        const sound = await speakJapanese(currentKana, {
+          voice: voiceConfig?.voice,
+          rate: settings.speechRate,
+        });
+        setCurrentSound(sound);
+
+        sound.setOnPlaybackStatusUpdate((status) => {
+          if (status.didJustFinish) {
+            setCurrentSound(null);
+          }
+        });
+      } catch (error) {
+        console.error('TTS error:', error);
+      }
+
+      // Green glow animation
       Animated.sequence([
-        Animated.timing(flashAnim, {
+        Animated.timing(glowAnim, {
           toValue: 1,
-          duration: 200,
+          duration: 300,
           useNativeDriver: false,
         }),
-        Animated.timing(flashAnim, {
+        Animated.timing(glowAnim, {
           toValue: 0,
-          duration: 200,
+          duration: 300,
           useNativeDriver: false,
         }),
       ]).start();
 
-      // Move to next after delay
+      // Move to next after showing answer briefly
       setTimeout(() => {
-        const newRemaining = remainingKana.slice(1);
-        setRemainingKana(newRemaining);
-        if (newRemaining.length === 0) {
-          // Practice complete
-          setCurrentKana('');
-        } else {
-          loadNextKana(newRemaining, kanaMap);
-        }
-      }, 800);
+        loadNextKana(mode);
+      }, 600);
     } else {
-      setFeedback('wrong');
+      setShowAnswer(true);
+      setIsCorrectAnswer(false);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
 
-      // Flash red
+      // Speak the correct Japanese kana character
+      try {
+        if (currentSound) {
+          await stopSpeaking(currentSound);
+          setCurrentSound(null);
+        }
+
+        const voiceConfig = VOICE_OPTIONS.find(v => v.value === settings.voiceGender);
+        const sound = await speakJapanese(currentKana, {
+          voice: voiceConfig?.voice,
+          rate: settings.speechRate,
+        });
+        setCurrentSound(sound);
+
+        sound.setOnPlaybackStatusUpdate((status) => {
+          if (status.didJustFinish) {
+            setCurrentSound(null);
+          }
+        });
+      } catch (error) {
+        console.error('TTS error:', error);
+      }
+
+      // Red glow animation
       Animated.sequence([
-        Animated.timing(flashAnim, {
+        Animated.timing(glowAnim, {
           toValue: 1,
-          duration: 200,
+          duration: 300,
           useNativeDriver: false,
         }),
-        Animated.timing(flashAnim, {
+        Animated.timing(glowAnim, {
           toValue: 0,
-          duration: 200,
+          duration: 300,
           useNativeDriver: false,
         }),
       ]).start();
 
-      // Clear input and try again
+      // Shake animation
+      Animated.sequence([
+        Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: -10, duration: 50, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: -10, duration: 50, useNativeDriver: true }),
+        Animated.timing(shakeAnim, { toValue: 0, duration: 50, useNativeDriver: true }),
+      ]).start();
+
+      // Show answer briefly, then let them try again
       setTimeout(() => {
         setUserInput('');
-        setFeedback('');
+        setShowAnswer(false);
+        setIsCorrectAnswer(null);
         inputRef.current?.focus();
-      }, 1000);
+      }, 1500);
     }
   };
-
-  const flashColor = flashAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: feedback === 'correct'
-      ? ['#0A0A0A', '#4CAF50']
-      : ['#0A0A0A', '#E85D3A'],
-  });
 
   // Mode selection screen
   if (!mode) {
@@ -274,139 +319,75 @@ export default function KanaPractice({ onClose }) {
     );
   }
 
-  // Practice complete screen
-  if (!currentKana) {
-    const percentage = total > 0 ? Math.round((score / total) * 100) : 0;
-    return (
-      <SafeAreaView style={styles.safe}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={onClose}>
-            <Text style={styles.closeText}>✕</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Complete!</Text>
-          <View style={{ width: 40 }} />
-        </View>
-
-        <View style={styles.resultsContainer}>
-          <Text style={styles.resultsEmoji}>
-            {percentage >= 80 ? '🎉' : percentage >= 60 ? '👍' : '📚'}
-          </Text>
-          <Text style={styles.resultsScore}>
-            {score} / {total}
-          </Text>
-          <Text style={styles.resultsPercentage}>{percentage}%</Text>
-          <Text style={styles.resultsMessage}>
-            {percentage >= 80
-              ? 'Excellent work!'
-              : percentage >= 60
-              ? 'Good job! Keep practicing.'
-              : 'Keep going, you\'ll get there!'}
-          </Text>
-
-          <TouchableOpacity
-            style={styles.restartButton}
-            onPress={() => startPractice(mode)}
-          >
-            <Text style={styles.restartButtonText}>Practice Again</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.changeButton} onPress={() => setMode(null)}>
-            <Text style={styles.changeButtonText}>Change Mode</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
   // Practice screen
+  const glowColor = glowAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [
+      isCorrectAnswer === false ? 'rgba(244, 67, 54, 0)' : 'rgba(76, 175, 80, 0)',
+      isCorrectAnswer === false ? 'rgba(244, 67, 54, 0.3)' : 'rgba(76, 175, 80, 0.3)',
+    ],
+  });
+
+  const answerTextColor = isCorrectAnswer === false ? '#F44336' : '#4CAF50';
+  const answerBorderColor = isCorrectAnswer === false ? '#F44336' : '#4CAF50';
+
   return (
-    <Animated.View style={[styles.safe, { backgroundColor: flashColor }]}>
-      <SafeAreaView style={{ flex: 1 }}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={onClose}>
-            <Text style={styles.closeText}>✕</Text>
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>
-            {mode === 'hiragana' ? 'Hiragana Basic' :
-             mode === 'katakana' ? 'Katakana Basic' :
-             mode === 'hiragana-advanced' ? 'Hiragana Advanced' :
-             'Katakana Advanced'}
-          </Text>
-          <Text style={styles.scoreText}>
-            {score}/{total}
-          </Text>
-        </View>
+    <SafeAreaView style={styles.safe}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={onClose}>
+          <Text style={styles.closeText}>✕</Text>
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>
+          {mode === 'hiragana' ? 'Hiragana Basic' :
+           mode === 'katakana' ? 'Katakana Basic' :
+           mode === 'hiragana-advanced' ? 'Hiragana Advanced' :
+           'Katakana Advanced'}
+        </Text>
+        <View style={{ width: 40 }} />
+      </View>
 
-        <View style={styles.practiceContainer}>
-          <Text style={styles.instruction}>Type the romaji</Text>
+      <View style={styles.practiceContainer}>
+        <Text style={styles.instruction}>Type the romaji</Text>
 
-          <View style={styles.kanaDisplay}>
-            <Text style={styles.kanaChar}>{currentKana}</Text>
-          </View>
-
-          <View style={styles.progressBar}>
-            <View
-              style={[
-                styles.progressFill,
-                {
-                  width: `${
-                    ((Object.keys(KANA_SETS[mode]).length - remainingKana.length) /
-                      Object.keys(KANA_SETS[mode]).length) *
-                    100
-                  }%`,
-                },
-              ]}
-            />
-          </View>
-
-          <TextInput
-            ref={inputRef}
-            style={styles.input}
-            value={userInput}
-            onChangeText={setUserInput}
-            onSubmitEditing={handleSubmit}
-            placeholder="Type here..."
-            placeholderTextColor="#444"
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="done"
-          />
-
-          {feedback && (
-            <Text
-              style={[
-                styles.feedbackText,
-                feedback === 'correct' ? styles.feedbackCorrect : styles.feedbackWrong,
-              ]}
-            >
-              {feedback === 'correct' ? '○ Correct!' : `× Try again (${correctRomaji})`}
-            </Text>
+        <Animated.View style={[styles.kanaDisplay, { transform: [{ translateX: shakeAnim }] }]}>
+          <Text style={styles.kanaChar}>{currentKana}</Text>
+          {showAnswer && (
+            <Animated.View style={[
+              styles.answerGlow,
+              { backgroundColor: glowColor, borderColor: answerBorderColor }
+            ]}>
+              <Text style={[styles.answerText, { color: answerTextColor }]}>{correctRomaji}</Text>
+            </Animated.View>
           )}
+        </Animated.View>
 
-          <TouchableOpacity
-            style={[styles.submitButton, !userInput && styles.submitButtonDisabled]}
-            onPress={handleSubmit}
-            disabled={!userInput}
-          >
-            <Text style={styles.submitButtonText}>Check</Text>
-          </TouchableOpacity>
+        <TextInput
+          ref={inputRef}
+          style={styles.input}
+          value={userInput}
+          onChangeText={setUserInput}
+          onSubmitEditing={handleSubmit}
+          placeholder="Type here..."
+          placeholderTextColor="#444"
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="done"
+          editable={!showAnswer}
+        />
 
-          <TouchableOpacity style={styles.skipButton} onPress={() => {
-            const kanaMap = KANA_SETS[mode];
-            const newRemaining = remainingKana.slice(1);
-            setRemainingKana(newRemaining);
-            setTotal(total + 1);
-            if (newRemaining.length === 0) {
-              setCurrentKana('');
-            } else {
-              loadNextKana(newRemaining, kanaMap);
-            }
-          }}>
-            <Text style={styles.skipButtonText}>Skip →</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    </Animated.View>
+        <TouchableOpacity
+          style={[styles.submitButton, (!userInput || showAnswer) && styles.submitButtonDisabled]}
+          onPress={handleSubmit}
+          disabled={!userInput || showAnswer}
+        >
+          <Text style={styles.submitButtonText}>Check</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.skipButton} onPress={() => loadNextKana(mode)}>
+          <Text style={styles.skipButtonText}>Skip →</Text>
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>
   );
 }
 
@@ -497,23 +478,29 @@ const styles = StyleSheet.create({
   },
   kanaDisplay: {
     alignItems: 'center',
-    marginBottom: 40,
+    marginBottom: 60,
+    position: 'relative',
   },
   kanaChar: {
     fontSize: 120,
     color: '#EFEFEF',
     fontWeight: '300',
+    marginBottom: 20,
   },
-  progressBar: {
-    height: 4,
-    backgroundColor: '#1A1A1A',
-    borderRadius: 2,
-    marginBottom: 40,
+  answerGlow: {
+    position: 'absolute',
+    bottom: -40,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#4CAF50',
   },
-  progressFill: {
-    height: 4,
-    backgroundColor: '#E85D3A',
-    borderRadius: 2,
+  answerText: {
+    fontSize: 32,
+    color: '#4CAF50',
+    fontWeight: '700',
+    letterSpacing: 1,
   },
   input: {
     backgroundColor: '#111',
@@ -524,19 +511,7 @@ const styles = StyleSheet.create({
     fontSize: 24,
     color: '#EFEFEF',
     textAlign: 'center',
-    marginBottom: 16,
-  },
-  feedbackText: {
-    fontSize: 16,
-    fontWeight: '600',
-    textAlign: 'center',
-    marginBottom: 16,
-  },
-  feedbackCorrect: {
-    color: '#4CAF50',
-  },
-  feedbackWrong: {
-    color: '#E85D3A',
+    marginBottom: 24,
   },
   submitButton: {
     backgroundColor: '#E85D3A',
@@ -559,58 +534,6 @@ const styles = StyleSheet.create({
   },
   skipButtonText: {
     color: '#555',
-    fontSize: 14,
-  },
-
-  // Results
-  resultsContainer: {
-    flex: 1,
-    padding: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  resultsEmoji: {
-    fontSize: 80,
-    marginBottom: 24,
-  },
-  resultsScore: {
-    color: '#EFEFEF',
-    fontSize: 48,
-    fontWeight: '800',
-    marginBottom: 8,
-  },
-  resultsPercentage: {
-    color: '#E85D3A',
-    fontSize: 32,
-    fontWeight: '700',
-    marginBottom: 16,
-  },
-  resultsMessage: {
-    color: '#888',
-    fontSize: 16,
-    textAlign: 'center',
-    marginBottom: 40,
-  },
-  restartButton: {
-    backgroundColor: '#E85D3A',
-    borderRadius: 12,
-    paddingVertical: 16,
-    paddingHorizontal: 32,
-    marginBottom: 12,
-    width: '100%',
-    alignItems: 'center',
-  },
-  restartButtonText: {
-    color: '#FFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  changeButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-  },
-  changeButtonText: {
-    color: '#666',
     fontSize: 14,
   },
 });
