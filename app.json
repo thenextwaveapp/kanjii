@@ -12,7 +12,10 @@
     "scheme": "kanjii",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.kanjii.app"
+      "bundleIdentifier": "com.kanjii.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -23,6 +26,12 @@
     "plugins": [
       "expo-web-browser",
       "expo-asset"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "f07acb16-c8ba-40a6-8901-b5864e475a40"
+      }
+    },
+    "owner": "thenextwaveapp"
   }
 }
