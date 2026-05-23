@@ -67,7 +67,7 @@ export default function HomeScreen({ navigation, user }) {
       <View style={styles.actions}>
         <TouchableOpacity
           style={styles.primaryCard}
-          onPress={() => navigation.navigate('ModeSelect')}
+          onPress={() => navigation.navigate('ModeSelect', { user })}
           activeOpacity={0.85}
         >
           <Text style={styles.primaryCardIcon}>✏️</Text>
@@ -129,7 +129,7 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 20,
   },
-  logo: { fontSize: 26, color: '#EFEFEF', fontWeight: '800', letterSpacing: -0.5, marginBottom: 4 },
+  logo: { fontSize: 26, color: '#EFEFEF', fontWeight: '900', letterSpacing: -0.5, marginBottom: 4 },
   logoAccent: { color: '#E85D3A' },
   avatar: { width: 44, height: 44, borderRadius: 22 },
   iconButton: {
@@ -145,7 +145,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     marginHorizontal: 24,
     backgroundColor: '#111',
-    borderRadius: 16,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#222',
     paddingVertical: 16,
@@ -163,7 +163,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   primaryCardIcon: { fontSize: 28 },
-  primaryCardTitle: { color: '#fff', fontSize: 24, fontWeight: '800', letterSpacing: -0.5 },
+  primaryCardTitle: { color: '#fff', fontSize: 24, fontWeight: '900', letterSpacing: -1 },
   primaryCardSub: { color: 'rgba(255,255,255,0.7)', fontSize: 13 },
   secondaryCard: {
     backgroundColor: '#111',
@@ -174,6 +174,6 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   secondaryCardIcon: { fontSize: 28, color: '#E85D3A' },
-  secondaryCardTitle: { color: '#EFEFEF', fontSize: 24, fontWeight: '800', letterSpacing: -0.5 },
+  secondaryCardTitle: { color: '#EFEFEF', fontSize: 24, fontWeight: '900', letterSpacing: -1 },
   secondaryCardSub: { color: '#555', fontSize: 13 },
 });

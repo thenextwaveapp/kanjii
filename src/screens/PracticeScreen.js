@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   SafeAreaView,
+  Modal,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import SnippetCard from '../components/SnippetCard';
@@ -16,6 +17,7 @@ import TypingInput from '../components/TypingInput';
 import { fetchSentence, fetchTargetedSentence } from '../services/sentences';
 import { recordCompletion, recordSkip } from '../services/progress';
 import { fetchLessonSentences, updateLessonProgress } from '../services/collections';
+import { fetchSentenceLists, addSentenceToList, removeSentenceFromList, getSentenceLists, fetchListSentences } from '../services/sentenceLists';
 
 export default function PracticeScreen({ navigation, route, user }) {
   const {
@@ -27,14 +29,18 @@ export default function PracticeScreen({ navigation, route, user }) {
     lessonId = null,       // UUID — lesson mode, ordered sentences
     lessonName = null,     // string — lesson name for display
     collectionName = null, // string — collection name for display
+    listId = null,         // UUID — list mode, sentences from custom list
+    listName = null,       // string — list name for display
   } = route?.params || {};
 
   const isLesson = !!lessonId;
+  const isList = !!listId;
   const isDrill = !!reviewKanji && reviewKanji.length > 0;
   const isSingle = !!singleSentence;
 
   const [lessonSentences, setLessonSentences] = useState([]);
-  const totalRounds = isSingle ? 1 : isLesson ? lessonSentences.length : rounds;
+  const [listSentences, setListSentences] = useState([]);
+  const totalRounds = isSingle ? 1 : isLesson ? lessonSentences.length : isList ? listSentences.length : rounds;
 
   const [sentence, setSentence] = useState(isSingle ? singleSentence : null);
   const [loading, setLoading] = useState(!isSingle);
@@ -42,6 +48,9 @@ export default function PracticeScreen({ navigation, route, user }) {
   const [attempts, setAttempts] = useState(0);
   const [currentRound, setCurrentRound] = useState(1);
   const [done, setDone] = useState(false);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [sentenceLists, setSentenceLists] = useState([]);
+  const [currentSentenceListIds, setCurrentSentenceListIds] = useState([]);
 
   const sessionStart = useRef(new Date().toISOString());
   const roundResults = useRef([]);
@@ -65,6 +74,14 @@ export default function PracticeScreen({ navigation, route, user }) {
         } else {
           throw new Error('No more sentences in this lesson');
         }
+      } else if (isList) {
+        // List mode: get next sentence from list
+        const nextIndex = currentRound - 1;
+        if (nextIndex < listSentences.length) {
+          data = listSentences[nextIndex];
+        } else {
+          throw new Error('No more sentences in this list');
+        }
       } else if (isDrill) {
         data = await fetchTargetedSentence(reviewKanji);
       } else {
@@ -85,6 +102,16 @@ export default function PracticeScreen({ navigation, route, user }) {
 
   useEffect(() => {
     async function initialize() {
+      // Fetch sentence lists
+      if (user?.id) {
+        try {
+          const lists = await fetchSentenceLists(user.id);
+          setSentenceLists(lists);
+        } catch (e) {
+          console.error('Failed to load sentence lists:', e);
+        }
+      }
+
       if (isLesson) {
         // Load all lesson sentences first
         try {
@@ -101,6 +128,22 @@ export default function PracticeScreen({ navigation, route, user }) {
         } finally {
           setLoading(false);
         }
+      } else if (isList) {
+        // Load all list sentences first
+        try {
+          const sentences = await fetchListSentences(listId);
+          setListSentences(sentences);
+          if (sentences.length > 0) {
+            setSentence(sentences[0]);
+            roundStart.current = Date.now();
+          } else {
+            setError('This list has no sentences yet');
+          }
+        } catch (e) {
+          setError('Failed to load list');
+        } finally {
+          setLoading(false);
+        }
       } else if (!isSingle) {
         loadSentence();
       } else {
@@ -109,6 +152,24 @@ export default function PracticeScreen({ navigation, route, user }) {
     }
     initialize();
   }, []);
+
+  // Fetch which lists the current sentence is in
+  useEffect(() => {
+    async function fetchSentenceLists() {
+      if (!sentence?.id) {
+        setCurrentSentenceListIds([]);
+        return;
+      }
+      try {
+        const lists = await getSentenceLists(sentence.id);
+        setCurrentSentenceListIds(lists.map(l => l.id));
+      } catch (e) {
+        console.error('Failed to fetch sentence lists:', e);
+        setCurrentSentenceListIds([]);
+      }
+    }
+    fetchSentenceLists();
+  }, [sentence?.id]);
 
   const finishSession = async (results) => {
     if (isSingle) {
@@ -195,11 +256,36 @@ export default function PracticeScreen({ navigation, route, user }) {
     }
   };
 
+  const handleClose = () => {
+    if (roundResults.current.length > 0 && !done) {
+      setShowExitConfirm(true);
+    } else {
+      navigation.goBack();
+    }
+  };
+
+  const handleSaveToList = async (listId, isCurrentlyInList) => {
+    if (!sentence?.id) return;
+    try {
+      if (isCurrentlyInList) {
+        await removeSentenceFromList(listId, sentence.id);
+        setCurrentSentenceListIds(prev => prev.filter(id => id !== listId));
+      } else {
+        await addSentenceToList(listId, sentence.id);
+        setCurrentSentenceListIds(prev => [...prev, listId]);
+      }
+    } catch (error) {
+      console.error('Failed to save sentence:', error);
+    }
+  };
+
   const progress = currentRound / totalRounds;
 
   const headerLabel = isSingle
     ? 'Re-practice'
     : isLesson
+    ? `${currentRound} / ${totalRounds}`
+    : isList
     ? `${currentRound} / ${totalRounds}`
     : isDrill
     ? `Drill · ${currentRound}/${totalRounds}`
@@ -209,15 +295,56 @@ export default function PracticeScreen({ navigation, route, user }) {
     ? 'Single round'
     : isLesson
     ? lessonName
+    : isList
+    ? listName
     : isDrill
     ? 'Weak kanji'
     : `${difficulty}${domain !== 'Any' ? ` · ${domain}` : ''}`;
 
   return (
     <SafeAreaView style={styles.safe}>
+      {/* Exit confirmation modal */}
+      <Modal
+        visible={showExitConfirm}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowExitConfirm(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Save your progress?</Text>
+            <Text style={styles.modalMessage}>
+              You've completed {roundResults.current.length} of {totalRounds} rounds
+            </Text>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalButtonDiscard]}
+                onPress={() => {
+                  setShowExitConfirm(false);
+                  navigation.goBack();
+                }}
+              >
+                <Text style={styles.modalButtonText}>Discard & Exit</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalButtonSave]}
+                onPress={() => {
+                  setShowExitConfirm(false);
+                  finishSession(roundResults.current);
+                }}
+              >
+                <Text style={[styles.modalButtonText, styles.modalButtonTextSave]}>
+                  Save & View Results
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
+        <TouchableOpacity onPress={handleClose}>
           <Text style={styles.backText}>✕</Text>
         </TouchableOpacity>
         <Text style={styles.roundText}>{headerLabel}</Text>
@@ -263,7 +390,13 @@ export default function PracticeScreen({ navigation, route, user }) {
           {sentence && !loading && !done && (
             <>
               <Text style={styles.instruction}>Tap words to reveal, then type</Text>
-              <SnippetCard snippet={sentence} />
+              <SnippetCard
+                snippet={sentence}
+                onViewDetail={() => navigation.navigate('SentenceDetail', { sentence })}
+                sentenceLists={sentenceLists}
+                sentenceListIds={currentSentenceListIds}
+                onSaveToList={handleSaveToList}
+              />
               <TypingInput
                 target={sentence.japanese}
                 onMatch={handleMatch}
@@ -314,5 +447,60 @@ const styles = StyleSheet.create({
   },
   retryText: { color: '#EFEFEF', fontSize: 14 },
   skipButton: { marginTop: 20, alignItems: 'center', paddingVertical: 8 },
-  skipText: { color: '#333', fontSize: 13, letterSpacing: 1 },
+  skipText: { color: '#555', fontSize: 13, letterSpacing: 0.5 },
+
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalContent: {
+    backgroundColor: '#111',
+    borderRadius: 10,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  modalTitle: {
+    color: '#EFEFEF',
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  modalMessage: {
+    color: '#888',
+    fontSize: 14,
+    marginBottom: 24,
+    textAlign: 'center',
+  },
+  modalButtons: {
+    gap: 12,
+  },
+  modalButton: {
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  modalButtonDiscard: {
+    backgroundColor: '#1A1A1A',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  modalButtonSave: {
+    backgroundColor: '#E85D3A',
+  },
+  modalButtonText: {
+    color: '#888',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  modalButtonTextSave: {
+    color: '#FFF',
+  },
 });

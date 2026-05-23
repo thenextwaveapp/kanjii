@@ -65,7 +65,7 @@ export async function fetchLessons(collectionId, userId) {
       // Get user progress
       const { data: progress } = await supabase
         .from('user_lesson_progress')
-        .select('mastered_count, total_count, completed_at')
+        .select('mastered_count, good_count, total_count, completed_at')
         .eq('lesson_id', lesson.id)
         .eq('user_id', userId)
         .maybeSingle();
@@ -74,6 +74,7 @@ export async function fetchLessons(collectionId, userId) {
         ...lesson,
         sentenceCount: sentenceCount || 0,
         masteredCount: progress?.mastered_count || 0,
+        goodCount: progress?.good_count || 0,
         totalCount: progress?.total_count || sentenceCount || 0,
         completedAt: progress?.completed_at,
         isComplete: progress?.completed_at != null,
@@ -114,10 +115,65 @@ export async function fetchLessonSentences(lessonId) {
  * Update user progress for a lesson
  */
 export async function updateLessonProgress({ userId, lessonId, sentenceResults }) {
-  // Count how many got ○ (maru)
-  const masteredCount = sentenceResults.filter(r => r.grade === '○').length;
-  const totalCount = sentenceResults.length;
-  const isComplete = masteredCount === totalCount;
+  // Save individual sentence progress
+  // Only keep the best grade for each sentence (○ > △ > ×)
+  const gradeRank = { '○': 3, '△': 2, '×': 1 };
+
+  for (const result of sentenceResults) {
+    if (!result.sentence?.id) continue;
+
+    // Check existing grade for this sentence
+    const { data: existing } = await supabase
+      .from('user_lesson_sentence_progress')
+      .select('grade')
+      .eq('user_id', userId)
+      .eq('lesson_id', lessonId)
+      .eq('sentence_id', result.sentence.id)
+      .maybeSingle();
+
+    // Only update if new grade is better or doesn't exist
+    const existingRank = existing?.grade ? gradeRank[existing.grade] : 0;
+    const newRank = gradeRank[result.grade];
+
+    if (newRank > existingRank) {
+      const { error: sentenceError } = await supabase
+        .from('user_lesson_sentence_progress')
+        .upsert({
+          user_id: userId,
+          lesson_id: lessonId,
+          sentence_id: result.sentence.id,
+          grade: result.grade,
+          practiced_at: new Date().toISOString(),
+        }, {
+          onConflict: 'user_id,lesson_id,sentence_id'
+        });
+
+      if (sentenceError) {
+        console.error('Error saving sentence progress:', sentenceError);
+      }
+    }
+  }
+
+  // Get total number of sentences in this lesson
+  const { count: totalSentencesInLesson } = await supabase
+    .from('lesson_sentences')
+    .select('*', { count: 'exact', head: true })
+    .eq('lesson_id', lessonId);
+
+  // Get all sentence progress for this lesson
+  const { data: allSentenceProgress } = await supabase
+    .from('user_lesson_sentence_progress')
+    .select('grade')
+    .eq('user_id', userId)
+    .eq('lesson_id', lessonId);
+
+  // Count mastered and good across ALL sentences practiced in this lesson
+  const masteredCount = (allSentenceProgress || []).filter(p => p.grade === '○').length;
+  const goodCount = (allSentenceProgress || []).filter(p => p.grade === '△').length;
+  const completedWithPassingGrade = masteredCount + goodCount;
+
+  // Lesson is complete only when ALL sentences in the lesson have been completed with ○ or △
+  const isComplete = completedWithPassingGrade === totalSentencesInLesson;
 
   const { error } = await supabase
     .from('user_lesson_progress')
@@ -125,7 +181,8 @@ export async function updateLessonProgress({ userId, lessonId, sentenceResults }
       user_id: userId,
       lesson_id: lessonId,
       mastered_count: masteredCount,
-      total_count: totalCount,
+      good_count: goodCount,
+      total_count: totalSentencesInLesson || 0,
       completed_at: isComplete ? new Date().toISOString() : null,
       last_practiced_at: new Date().toISOString(),
     }, {
@@ -136,13 +193,18 @@ export async function updateLessonProgress({ userId, lessonId, sentenceResults }
 
   return {
     masteredCount,
-    totalCount,
+    goodCount,
+    totalCount: totalSentencesInLesson || 0,
     isComplete,
   };
 }
 
 /**
  * Get collection progress summary
+ * Percentage is calculated based on individual sentences:
+ * - ○ (mastered) = 100% = 1.0 weight
+ * - △ (good) = 80% = 0.8 weight
+ * - × or not attempted = 0% = 0.0 weight
  */
 export async function getCollectionProgress(collectionId, userId) {
   // Get all lessons for this collection
@@ -157,21 +219,47 @@ export async function getCollectionProgress(collectionId, userId) {
 
   const lessonIds = lessons.map(l => l.id);
 
-  // Get completed lessons
-  const { data: progress } = await supabase
-    .from('user_lesson_progress')
-    .select('completed_at')
-    .in('lesson_id', lessonIds)
-    .eq('user_id', userId)
-    .not('completed_at', 'is', null);
+  // Get lesson counts
+  const { data: lessonSentenceCounts } = await supabase
+    .from('lesson_sentences')
+    .select('lesson_id')
+    .in('lesson_id', lessonIds);
 
-  const completedLessons = (progress || []).length;
-  const totalLessons = lessons.length;
-  const percentage = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
+  // Count total sentences in collection
+  const totalSentences = lessonSentenceCounts ? lessonSentenceCounts.length : 0;
+
+  if (totalSentences === 0) {
+    return { completedLessons: 0, totalLessons: lessons.length, percentage: 0 };
+  }
+
+  // Get user progress for all lessons
+  const { data: progressData } = await supabase
+    .from('user_lesson_progress')
+    .select('mastered_count, good_count, completed_at')
+    .in('lesson_id', lessonIds)
+    .eq('user_id', userId);
+
+  // Calculate weighted score
+  let totalScore = 0;
+  let completedLessons = 0;
+
+  (progressData || []).forEach(prog => {
+    // ○ = 1.0 weight, △ = 0.8 weight
+    const masteredScore = (prog.mastered_count || 0) * 1.0;
+    const goodScore = (prog.good_count || 0) * 0.8;
+    totalScore += masteredScore + goodScore;
+
+    // Count completed lessons
+    if (prog.completed_at) {
+      completedLessons++;
+    }
+  });
+
+  const percentage = Math.round((totalScore / totalSentences) * 100);
 
   return {
     completedLessons,
-    totalLessons,
+    totalLessons: lessons.length,
     percentage,
   };
 }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,14 +6,30 @@ import {
   TouchableOpacity,
   SafeAreaView,
   ScrollView,
+  Switch,
+  Alert,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { TEXT_SCALE_OPTIONS, VOICE_OPTIONS, SPEECH_RATE_OPTIONS } from '../services/settings';
 import { useSettings } from '../contexts/SettingsContext';
 import { speakJapanese } from '../services/tts';
+import { signOut } from '../services/auth';
+import {
+  requestPermissions,
+  scheduleDailyReminder,
+  scheduleStreakRiskAlert,
+  cancelAllNotifications,
+  checkNotificationPermissions,
+} from '../services/notifications';
 
-export default function SettingsScreen({ navigation }) {
+export default function SettingsScreen({ navigation, user }) {
   const { settings, updateSetting } = useSettings();
   const [testingVoice, setTestingVoice] = useState(false);
+  const [hasPermission, setHasPermission] = useState(false);
+
+  useEffect(() => {
+    checkNotificationPermissions().then(setHasPermission);
+  }, []);
 
   const testVoice = async () => {
     if (testingVoice) return;
@@ -28,6 +44,47 @@ export default function SettingsScreen({ navigation }) {
       console.error('Voice test error:', error);
     } finally {
       setTimeout(() => setTestingVoice(false), 2000);
+    }
+  };
+
+  const handleNotificationToggle = async (value) => {
+    if (value) {
+      // Request permissions
+      const granted = await requestPermissions();
+      if (!granted) {
+        Alert.alert(
+          'Permission Required',
+          'Please enable notifications in your device settings to receive practice reminders.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+      setHasPermission(true);
+
+      // Schedule notifications
+      await scheduleDailyReminder(settings.dailyReminderHour, settings.dailyReminderMinute);
+      await scheduleStreakRiskAlert();
+      await updateSetting('notificationsEnabled', true);
+    } else {
+      // Cancel all notifications
+      await cancelAllNotifications();
+      await updateSetting('notificationsEnabled', false);
+    }
+  };
+
+  const handleTimeChange = async (event, selectedDate) => {
+    if (event.type === 'dismissed') return;
+
+    if (selectedDate) {
+      const hour = selectedDate.getHours();
+      const minute = selectedDate.getMinutes();
+
+      await updateSetting('dailyReminderHour', hour);
+      await updateSetting('dailyReminderMinute', minute);
+
+      if (settings.notificationsEnabled) {
+        await scheduleDailyReminder(hour, minute);
+      }
     }
   };
 
@@ -48,7 +105,7 @@ export default function SettingsScreen({ navigation }) {
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Voice</Text>
 
-          <View style={styles.card}>
+          <View style={[styles.card, styles.cardWithButton]}>
             <Text style={styles.compactLabel}>Gender</Text>
             <View style={styles.compactOptions}>
               {VOICE_OPTIONS.map((option) => (
@@ -126,6 +183,104 @@ export default function SettingsScreen({ navigation }) {
             </View>
           </View>
         </View>
+
+        {/* Notifications */}
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>Notifications</Text>
+
+          <View style={styles.card}>
+            <View style={styles.notificationRow}>
+              <View style={styles.notificationInfo}>
+                <Text style={styles.notificationTitle}>Daily Reminders</Text>
+                <Text style={styles.notificationDescription}>
+                  Get notified to practice and protect your streak
+                </Text>
+              </View>
+              <Switch
+                value={settings.notificationsEnabled}
+                onValueChange={handleNotificationToggle}
+                trackColor={{ false: '#333', true: '#E85D3A' }}
+                thumbColor={settings.notificationsEnabled ? '#FFF' : '#888'}
+              />
+            </View>
+
+            {settings.notificationsEnabled && (
+              <>
+                <View style={styles.divider} />
+                <Text style={styles.compactLabel}>Reminder Time</Text>
+                <View style={styles.timePickerContainer}>
+                  <DateTimePicker
+                    value={(() => {
+                      const date = new Date();
+                      date.setHours(settings.dailyReminderHour);
+                      date.setMinutes(settings.dailyReminderMinute);
+                      return date;
+                    })()}
+                    mode="time"
+                    is24Hour={true}
+                    display="spinner"
+                    onChange={handleTimeChange}
+                    textColor="#EFEFEF"
+                  />
+                </View>
+                <Text style={styles.notificationHint}>
+                  Streak risk alerts sent at 22:00 if you haven't practiced
+                </Text>
+              </>
+            )}
+          </View>
+
+          {/* Account Section */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Account</Text>
+            <View style={styles.card}>
+              <View style={styles.settingRow}>
+                <Text style={styles.settingLabel}>Email</Text>
+                <Text style={styles.accountEmail}>{user?.email || 'Not signed in'}</Text>
+              </View>
+
+              {user?.user_metadata?.full_name && (
+                <>
+                  <View style={styles.divider} />
+                  <View style={styles.settingRow}>
+                    <Text style={styles.settingLabel}>Name</Text>
+                    <Text style={styles.accountEmail}>{user.user_metadata.full_name}</Text>
+                  </View>
+                </>
+              )}
+
+              <View style={styles.divider} />
+
+              <TouchableOpacity
+                style={styles.signOutButton}
+                onPress={() => {
+                  Alert.alert(
+                    'Sign Out',
+                    'Are you sure you want to sign out? Your progress is saved and will be restored when you sign back in.',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Sign Out',
+                        style: 'destructive',
+                        onPress: async () => {
+                          try {
+                            await signOut();
+                            // App.js will handle navigation back to splash
+                          } catch (error) {
+                            Alert.alert('Error', 'Failed to sign out');
+                          }
+                        },
+                      },
+                    ]
+                  );
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.signOutText}>Sign Out</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -141,12 +296,12 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   backText: { color: '#555', fontSize: 14 },
-  logo: { fontSize: 20, color: '#EFEFEF', fontWeight: '800', letterSpacing: -0.5 },
+  logo: { fontSize: 20, color: '#EFEFEF', fontWeight: '900', letterSpacing: -0.5 },
   logoAccent: { color: '#E85D3A' },
   title: {
     color: '#EFEFEF',
     fontSize: 28,
-    fontWeight: '800',
+    fontWeight: '900',
     letterSpacing: -0.5,
     marginBottom: 32,
   },
@@ -160,12 +315,14 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: '#111',
-    borderRadius: 16,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#1A1A1A',
     padding: 16,
-    paddingBottom: 60,
     position: 'relative',
+  },
+  cardWithButton: {
+    paddingBottom: 60,
   },
   compactLabel: {
     color: '#AAA',
@@ -206,7 +363,7 @@ const styles = StyleSheet.create({
     right: 12,
     width: 40,
     height: 40,
-    borderRadius: 20,
+    borderRadius: 10,
     backgroundColor: '#1A1A1A',
     borderWidth: 1,
     borderColor: '#333',
@@ -251,7 +408,7 @@ const styles = StyleSheet.create({
   },
   preview: {
     backgroundColor: '#0A0A0A',
-    borderRadius: 12,
+    borderRadius: 8,
     padding: 16,
     alignItems: 'center',
     gap: 6,
@@ -286,5 +443,70 @@ const styles = StyleSheet.create({
   },
   scaleTextActive: {
     color: '#FFF',
+  },
+  notificationRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  notificationInfo: {
+    flex: 1,
+    marginRight: 12,
+  },
+  notificationTitle: {
+    color: '#EFEFEF',
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  notificationDescription: {
+    color: '#666',
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  timePickerContainer: {
+    backgroundColor: '#0A0A0A',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#222',
+    marginBottom: 12,
+    overflow: 'hidden',
+    alignItems: 'center',
+  },
+  notificationHint: {
+    color: '#555',
+    fontSize: 11,
+    fontStyle: 'italic',
+  },
+  sectionTitle: {
+    color: '#555',
+    fontSize: 11,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    marginBottom: 12,
+  },
+  settingRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  settingLabel: {
+    color: '#AAA',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  accountEmail: {
+    color: '#888',
+    fontSize: 14,
+  },
+  signOutButton: {
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  signOutText: {
+    color: '#E85D3A',
+    fontSize: 15,
+    fontWeight: '600',
   },
 });

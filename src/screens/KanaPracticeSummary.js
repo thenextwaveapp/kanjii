@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,7 +8,7 @@ import {
   SafeAreaView,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { getNewKanjiSince } from '../services/progress';
+import { saveKanaPracticeResults } from '../services/kanaProgress';
 
 function formatTime(ms) {
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
@@ -38,9 +38,8 @@ function getGradeLabel(grade) {
   return 'unknown';
 }
 
-export default function SummaryScreen({ navigation, route, user }) {
-  const { results = [], sessionStart, rounds, difficulty, domain = 'Any' } = route.params || {};
-  const [newKanji, setNewKanji] = useState([]);
+export default function KanaPracticeSummary({ navigation, route, user }) {
+  const { results = [], mode } = route.params || {};
 
   const perfect = results.filter((r) => r.grade === '○').length;
   const good = results.filter((r) => r.grade === '△').length;
@@ -49,11 +48,23 @@ export default function SummaryScreen({ navigation, route, user }) {
   const avgTime = results.length > 0
     ? results.reduce((s, r) => s + r.timeMs, 0) / results.length
     : 0;
+  const totalRounds = results.length;
+
+  const modeLabel =
+    mode === 'hiragana' ? 'Hiragana Basic' :
+    mode === 'katakana' ? 'Katakana Basic' :
+    mode === 'hiragana-advanced' ? 'Hiragana Advanced' :
+    mode === 'katakana-advanced' ? 'Katakana Advanced' :
+    'Kana Practice';
 
   useEffect(() => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    if (user?.id && sessionStart) {
-      getNewKanjiSince(user.id, sessionStart).then(setNewKanji);
+
+    // Save practice results to track progress
+    if (results.length > 0 && mode && user?.id) {
+      saveKanaPracticeResults(user.id, mode, results).catch(err => {
+        console.error('Error saving kana practice results:', err);
+      });
     }
   }, []);
 
@@ -62,14 +73,14 @@ export default function SummaryScreen({ navigation, route, user }) {
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.title}>Session complete</Text>
         <Text style={styles.subtitle}>
-          {rounds} rounds · {domain === 'Any' ? 'Any topic' : domain} · {difficulty}
+          {totalRounds} rounds · {modeLabel}
         </Text>
 
         {/* Top stats */}
         <View style={styles.statsRow}>
-          <StatBox label="○ Perfect" value={perfect} total={rounds} accent color="#4A90E2" />
-          <StatBox label="△ Good" value={good} total={rounds} color="#4CAF50" />
-          <StatBox label="× Skipped" value={skipped} total={rounds} color="#888" />
+          <StatBox label="○ Perfect" value={perfect} total={totalRounds} accent color="#4A90E2" />
+          <StatBox label="△ Good" value={good} total={totalRounds} color="#4CAF50" />
+          <StatBox label="× Skipped" value={skipped} total={totalRounds} color="#888" />
         </View>
         <View style={styles.statsRow}>
           <StatBox label="Best streak" value={streak} />
@@ -87,7 +98,10 @@ export default function SummaryScreen({ navigation, route, user }) {
             return (
               <View key={i} style={styles.roundRow}>
                 <Text style={[styles.gradeSymbol, { color: gradeColor }]}>{grade}</Text>
-                <Text style={styles.roundLabel}>Round {r.round}</Text>
+                <View style={styles.roundInfo}>
+                  <Text style={styles.roundKana}>{r.kana}</Text>
+                  <Text style={styles.roundRomaji}>{r.romaji}</Text>
+                </View>
                 <Text style={styles.roundTime}>{formatTime(r.timeMs)}</Text>
                 <Text style={[styles.roundStatus, { color: gradeColor }]}>{gradeLabel}</Text>
               </View>
@@ -95,41 +109,27 @@ export default function SummaryScreen({ navigation, route, user }) {
           })}
         </View>
 
-        {/* New kanji encountered */}
-        {newKanji.length > 0 && (
-          <>
-            <Text style={styles.sectionLabel}>New kanji this session</Text>
-            <View style={styles.kanjiRow}>
-              {newKanji.map((k) => (
-                <View key={k.kanji} style={styles.newKanjiCard}>
-                  <Text style={styles.newKanjiChar}>{k.kanji}</Text>
-                  {k.meanings?.[0] && (
-                    <Text style={styles.newKanjiMeaning} numberOfLines={1}>{k.meanings[0]}</Text>
-                  )}
-                </View>
-              ))}
-            </View>
-          </>
-        )}
-
         {/* Actions */}
         <TouchableOpacity
           style={styles.primaryButton}
-          onPress={() => navigation.replace('RoundSelect')}
+          onPress={() => navigation.navigate('Learn')}
           activeOpacity={0.85}
         >
-          <Text style={styles.primaryButtonText}>Play again</Text>
+          <Text style={styles.primaryButtonText}>Practice again</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.secondaryButton}
-          onPress={() => navigation.reset({
-            index: 0,
-            routes: [{ name: 'CollectionList' }],
-          })}
+          onPress={() => {
+            if (navigation.canGoBack()) {
+              navigation.goBack();
+            } else {
+              navigation.navigate('Home');
+            }
+          }}
           activeOpacity={0.7}
         >
-          <Text style={styles.secondaryButtonText}>Back to Lessons</Text>
+          <Text style={styles.secondaryButtonText}>Done</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -176,16 +176,23 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     width: 24,
   },
-  roundLabel: { color: '#EFEFEF', fontSize: 13, flex: 1 },
+  roundInfo: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  roundKana: {
+    color: '#EFEFEF',
+    fontSize: 20,
+    fontWeight: '400',
+  },
+  roundRomaji: {
+    color: '#666',
+    fontSize: 13,
+  },
   roundTime: { color: '#555', fontSize: 12 },
   roundStatus: { fontSize: 11, width: 60, textAlign: 'right', fontWeight: '600' },
-  kanjiRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 32 },
-  newKanjiCard: {
-    backgroundColor: '#111', borderRadius: 8, borderWidth: 1, borderColor: '#E85D3A',
-    padding: 12, width: 72, alignItems: 'center', gap: 4,
-  },
-  newKanjiChar: { fontSize: 26, color: '#EFEFEF' },
-  newKanjiMeaning: { fontSize: 9, color: '#555', textAlign: 'center' },
   primaryButton: {
     backgroundColor: '#E85D3A', borderRadius: 10, paddingVertical: 18, alignItems: 'center', marginBottom: 12,
   },

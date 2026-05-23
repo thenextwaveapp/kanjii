@@ -97,3 +97,31 @@ export async function getSentenceLists(sentenceId) {
 
   return (data || []).map(item => item.sentence_lists);
 }
+
+/**
+ * Fetch sentences from a specific list
+ */
+export async function fetchListSentences(listId) {
+  const { data, error } = await supabase
+    .from('sentence_list_items')
+    .select(`
+      sentence_id,
+      sentences (
+        id,
+        japanese,
+        english,
+        words,
+        jlpt_level,
+        domain
+      )
+    `)
+    .eq('list_id', listId)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching list sentences:', error);
+    return [];
+  }
+
+  return (data || []).map(item => item.sentences).filter(Boolean);
+}

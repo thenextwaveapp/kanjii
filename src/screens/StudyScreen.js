@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   TextInput,
   Modal,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { useFocusEffect } from '@react-navigation/native';
 import { fetchKanji, fetchUserSentences } from '../services/progress';
 import { toHiragana, toRomaji } from 'wanakana';
@@ -20,6 +21,9 @@ import {
   addSentenceToList,
   removeSentenceFromList,
 } from '../services/sentenceLists';
+import { speakJapanese } from '../services/tts';
+import { useSettings } from '../contexts/SettingsContext';
+import { VOICE_OPTIONS } from '../services/settings';
 
 const KANJI_TABS = ['All', 'Needs work', 'Mastered'];
 const KANJI_RE = /[\u4E00-\u9FFF\u3400-\u4DBF]/g;
@@ -35,8 +39,10 @@ function getMasteryColor(mastery) {
   return '#444'; // Default grey if no mastery set
 }
 
-export default function StudyScreen({ navigation, user }) {
-  const [mode, setMode] = useState('kanji'); // 'kanji' | 'sentences'
+export default function StudyScreen({ navigation, route, user }) {
+  const { initialMode, highlightSentenceId } = route.params || {};
+  const { settings } = useSettings();
+  const [mode, setMode] = useState(initialMode || 'kanji'); // 'kanji' | 'sentences'
   const [kanjiList, setKanjiList] = useState([]);
   const [sentences, setSentences] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -44,6 +50,9 @@ export default function StudyScreen({ navigation, user }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
+  const [highlightedSentenceId, setHighlightedSentenceId] = useState(highlightSentenceId);
+  const [playingSentenceId, setPlayingSentenceId] = useState(null);
+  const [playingWordKey, setPlayingWordKey] = useState(null);
 
   // Sentence lists state
   const [sentenceLists, setSentenceLists] = useState([]);
@@ -361,13 +370,49 @@ export default function StudyScreen({ navigation, user }) {
     });
   };
 
-  const practiceSentence = (sentence) => {
-    navigation.navigate('Practice', {
-      rounds: 1,
-      difficulty: 'Mixed',
-      domain: 'Any',
-      singleSentence: sentence,
+  const viewSentenceDetail = (sentence) => {
+    navigation.navigate('SentenceDetail', {
+      sentence,
     });
+  };
+
+  const handleSentenceSpeak = async (sentence) => {
+    if (playingSentenceId === sentence.id) return;
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setPlayingSentenceId(sentence.id);
+
+    try {
+      const voiceConfig = VOICE_OPTIONS.find(v => v.value === settings.voiceGender);
+      await speakJapanese(sentence.japanese, {
+        voice: voiceConfig?.voice,
+        rate: settings.speechRate,
+      });
+    } catch (error) {
+      console.error('Sentence TTS error:', error);
+    } finally {
+      setPlayingSentenceId(null);
+    }
+  };
+
+  const handleWordSpeak = async (word, wordKey) => {
+    if (playingWordKey === wordKey) return;
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setPlayingWordKey(wordKey);
+
+    try {
+      const textToSpeak = word.furigana || word.word;
+      const voiceConfig = VOICE_OPTIONS.find(v => v.value === settings.voiceGender);
+      await speakJapanese(textToSpeak, {
+        voice: voiceConfig?.voice,
+        rate: settings.speechRate,
+      });
+    } catch (error) {
+      console.error('Word TTS error:', error);
+    } finally {
+      setPlayingWordKey(null);
+    }
   };
 
   return (
@@ -380,69 +425,68 @@ export default function StudyScreen({ navigation, user }) {
         <Text style={styles.logo}>Kanj<Text style={styles.logoAccent}>ii</Text></Text>
       </View>
 
-      {/* Search bar - works for both tabs */}
-      <View style={styles.searchContainer}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder={
-            mode === 'kanji'
-              ? 'Search kanji, meaning, or reading...'
-              : 'Search sentences...'
-          }
-          placeholderTextColor="#555"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-        {searchQuery.length > 0 && (
+      {/* Search and Mode Toggle - Integrated */}
+      <View style={styles.topSection}>
+        {/* Mode toggle tabs */}
+        <View style={styles.modeRow}>
           <TouchableOpacity
-            style={styles.searchClear}
-            onPress={() => setSearchQuery('')}
+            style={[styles.modeBtn, mode === 'kanji' && styles.modeBtnActive]}
+            onPress={() => {
+              setMode('kanji');
+              setSearchQuery('');
+            }}
           >
-            <Text style={styles.searchClearText}>✕</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-
-      {/* Mode toggle */}
-      <View style={styles.modeRow}>
-        <TouchableOpacity
-          style={[styles.modeBtn, mode === 'kanji' && styles.modeBtnActive]}
-          onPress={() => {
-            setMode('kanji');
-            setSearchQuery(''); // Clear search when switching tabs
-          }}
-        >
-          <Text style={[styles.modeBtnText, mode === 'kanji' && styles.modeBtnTextActive]}>
-            Kanji
-          </Text>
-          {kanjiList.length > 0 && (
-            <View style={[styles.modeBadge, mode === 'kanji' && styles.modeBadgeActive]}>
+            <Text style={[styles.modeBtnText, mode === 'kanji' && styles.modeBtnTextActive]}>
+              Kanji
+            </Text>
+            {kanjiList.length > 0 && (
               <Text style={[styles.modeBadgeText, mode === 'kanji' && styles.modeBadgeTextActive]}>
                 {kanjiList.length}
               </Text>
-            </View>
-          )}
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.modeBtn, mode === 'sentences' && styles.modeBtnActive]}
-          onPress={() => {
-            setMode('sentences');
-            setSearchQuery(''); // Clear search when switching tabs
-          }}
-        >
-          <Text style={[styles.modeBtnText, mode === 'sentences' && styles.modeBtnTextActive]}>
-            Sentences
-          </Text>
-          {sentences.length > 0 && (
-            <View style={[styles.modeBadge, mode === 'sentences' && styles.modeBadgeActive]}>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.modeBtn, mode === 'sentences' && styles.modeBtnActive]}
+            onPress={() => {
+              setMode('sentences');
+              setSearchQuery('');
+            }}
+          >
+            <Text style={[styles.modeBtnText, mode === 'sentences' && styles.modeBtnTextActive]}>
+              Sentences
+            </Text>
+            {sentences.length > 0 && (
               <Text style={[styles.modeBadgeText, mode === 'sentences' && styles.modeBadgeTextActive]}>
                 {sentences.length}
               </Text>
-            </View>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {/* Search bar */}
+        <View style={styles.searchContainer}>
+          <TextInput
+            style={styles.searchInput}
+            placeholder={
+              mode === 'kanji'
+                ? 'Search kanji, meaning, or reading...'
+                : 'Search sentences...'
+            }
+            placeholderTextColor="#444"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity
+              style={styles.searchClear}
+              onPress={() => setSearchQuery('')}
+            >
+              <Text style={styles.searchClearText}>✕</Text>
+            </TouchableOpacity>
           )}
-        </TouchableOpacity>
+        </View>
       </View>
 
       {(loading || searching) ? (
@@ -467,10 +511,16 @@ export default function StudyScreen({ navigation, user }) {
           lists={sentenceLists}
           activeFilters={activeListFilters}
           onToggleFilter={toggleListFilter}
-          onPractice={practiceSentence}
+          onViewDetail={viewSentenceDetail}
+          onSentenceSpeak={handleSentenceSpeak}
+          playingSentenceId={playingSentenceId}
+          onWordSpeak={handleWordSpeak}
+          playingWordKey={playingWordKey}
           onOpenListModal={() => setShowListModal(true)}
           onToggleSentenceInList={toggleSentenceInList}
           navigation={navigation}
+          highlightedSentenceId={highlightedSentenceId}
+          onClearHighlight={() => setHighlightedSentenceId(null)}
         />
       )}
 
@@ -620,7 +670,35 @@ function KanjiView({ kanjiList, filtered, activeTab, setActiveTab, weakKanji, on
   );
 }
 
-function SentencesView({ sentences, searchQuery, lists, activeFilters, onToggleFilter, onPractice, onOpenListModal, onToggleSentenceInList, navigation }) {
+function SentencesView({ sentences, searchQuery, lists, activeFilters, onToggleFilter, onViewDetail, onSentenceSpeak, playingSentenceId, onWordSpeak, playingWordKey, onOpenListModal, onToggleSentenceInList, navigation, highlightedSentenceId, onClearHighlight }) {
+  const listRef = useRef(null);
+
+  // Scroll to highlighted sentence
+  useEffect(() => {
+    if (highlightedSentenceId && sentences.length > 0) {
+      const index = sentences.findIndex(s => s.id === highlightedSentenceId);
+      if (index !== -1 && listRef.current) {
+        setTimeout(() => {
+          listRef.current?.scrollToIndex({
+            index,
+            animated: true,
+            viewPosition: 0.5, // Center it
+          });
+        }, 100);
+      }
+    }
+  }, [highlightedSentenceId, sentences]);
+
+  // Clear highlight after 3 seconds
+  useEffect(() => {
+    if (highlightedSentenceId) {
+      const timer = setTimeout(() => {
+        onClearHighlight?.();
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [highlightedSentenceId, onClearHighlight]);
+
   if (sentences.length === 0) {
     return (
       <View style={styles.center}>
@@ -677,41 +755,72 @@ function SentencesView({ sentences, searchQuery, lists, activeFilters, onToggleF
       </View>
 
       <FlatList
+        ref={listRef}
         data={sentences}
         keyExtractor={(s, i) => s.id ?? String(i)}
         contentContainerStyle={styles.list}
+        onScrollToIndexFailed={(info) => {
+          // Fallback if scrollToIndex fails
+          setTimeout(() => {
+            listRef.current?.scrollToOffset({
+              offset: info.averageItemLength * info.index,
+              animated: true,
+            });
+          }, 100);
+        }}
         renderItem={({ item: s }) => {
         const kanjiChars = extractKanjiChars(s.japanese);
+        const isHighlighted = highlightedSentenceId && s.id === highlightedSentenceId;
+        const isPlaying = playingSentenceId === s.id;
         return (
           <TouchableOpacity
-            style={styles.sentenceCard}
-            onPress={() => onPractice(s)}
+            style={[
+              styles.sentenceCard,
+              isHighlighted && styles.sentenceCardHighlighted,
+              isPlaying && styles.sentenceCardPlaying
+            ]}
+            onPress={() => {
+              if (isHighlighted) onClearHighlight?.();
+              onViewDetail(s);
+            }}
+            onLongPress={() => onSentenceSpeak?.(s)}
             activeOpacity={0.8}
           >
             {/* Kanji chips */}
             {s.words && s.words.length > 0 && (
               <View style={styles.kanjiChipsRow}>
-                {s.words.slice(0, 4).map((w, idx) => (
-                  <TouchableOpacity
-                    key={`${w.word}-${idx}`}
-                    style={styles.kanjiChipSmall}
-                    onPress={(e) => {
-                      e.stopPropagation?.();
-                      const firstKanji = w.word?.match(/[\u4E00-\u9FFF\u3400-\u4DBF]/)?.[0];
-                      if (firstKanji) {
-                        navigation.navigate('KanjiDetail', { kanji: firstKanji });
-                      }
-                    }}
-                  >
-                    <Text style={styles.kanjiChipWord}>{w.word}</Text>
-                    {w.furigana && (
-                      <Text style={styles.kanjiChipFurigana}>{w.furigana}</Text>
-                    )}
-                    {w.meaning && (
-                      <Text style={styles.kanjiChipMeaning}>{w.meaning}</Text>
-                    )}
-                  </TouchableOpacity>
-                ))}
+                {s.words.slice(0, 4).map((w, idx) => {
+                  const wordKey = `${s.id}-${idx}`;
+                  const isWordPlaying = playingWordKey === wordKey;
+                  return (
+                    <TouchableOpacity
+                      key={`${w.word}-${idx}`}
+                      style={[
+                        styles.kanjiChipSmall,
+                        isWordPlaying && styles.kanjiChipPlaying
+                      ]}
+                      onPress={(e) => {
+                        e.stopPropagation?.();
+                        const firstKanji = w.word?.match(/[\u4E00-\u9FFF\u3400-\u4DBF]/)?.[0];
+                        if (firstKanji) {
+                          navigation.navigate('KanjiDetail', { kanji: firstKanji });
+                        }
+                      }}
+                      onLongPress={(e) => {
+                        e.stopPropagation?.();
+                        onWordSpeak?.(w, wordKey);
+                      }}
+                    >
+                      <Text style={styles.kanjiChipWord}>{w.word}</Text>
+                      {w.furigana && (
+                        <Text style={styles.kanjiChipFurigana}>{w.furigana}</Text>
+                      )}
+                      {w.meaning && (
+                        <Text style={styles.kanjiChipMeaning}>{w.meaning}</Text>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
                 {s.words.length > 4 && (
                   <Text style={styles.moreKanji}>+{s.words.length - 4}</Text>
                 )}
@@ -753,7 +862,7 @@ function SentencesView({ sentences, searchQuery, lists, activeFilters, onToggleF
 
             {/* Practice hint */}
             <View style={styles.sentenceFooter}>
-              <Text style={styles.practiceHint}>Tap to practice →</Text>
+              <Text style={styles.practiceHint}>Tap to view →</Text>
             </View>
           </TouchableOpacity>
         );
@@ -780,76 +889,84 @@ const styles = StyleSheet.create({
     alignItems: 'center', paddingHorizontal: 24, paddingTop: 16, paddingBottom: 12,
   },
   backText: { color: '#555', fontSize: 14 },
-  logo: { fontSize: 20, color: '#EFEFEF', fontWeight: '800', letterSpacing: -0.5 },
+  logo: { fontSize: 20, color: '#EFEFEF', fontWeight: '900', letterSpacing: -0.5 },
   logoAccent: { color: '#E85D3A' },
-  searchContainer: {
-    paddingHorizontal: 24,
-    paddingBottom: 12,
-    position: 'relative',
-  },
-  searchInput: {
-    backgroundColor: '#111',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#222',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    color: '#EFEFEF',
-    fontSize: 15,
-  },
-  searchClear: {
-    position: 'absolute',
-    right: 32,
-    top: 12,
-    width: 24,
-    height: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  searchClearText: {
-    color: '#555',
-    fontSize: 16,
+  topSection: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#1A1A1A',
   },
   modeRow: {
     flexDirection: 'row',
     paddingHorizontal: 24,
-    gap: 8,
-    marginBottom: 4,
-    paddingBottom: 12,
+    paddingTop: 4,
+  },
+  modeBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 14,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  modeBtnActive: {
+    borderBottomColor: '#E85D3A',
+  },
+  modeBtnText: {
+    color: '#555',
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  modeBtnTextActive: {
+    color: '#EFEFEF',
+  },
+  modeBadgeText: {
+    color: '#444',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  modeBadgeTextActive: {
+    color: '#E85D3A',
+  },
+  searchContainer: {
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    position: 'relative',
+  },
+  searchInput: {
+    color: '#EFEFEF',
+    fontSize: 15,
+    paddingVertical: 10,
+    paddingRight: 32,
     borderBottomWidth: 1,
     borderBottomColor: '#1A1A1A',
   },
-  modeBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 16, paddingVertical: 8,
-    borderRadius: 20, borderWidth: 1, borderColor: '#222',
-    backgroundColor: '#111',
+  searchClear: {
+    position: 'absolute',
+    right: 24,
+    top: 12,
+    padding: 8,
   },
-  modeBtnActive: { borderColor: '#E85D3A', backgroundColor: '#1A0A06' },
-  modeBtnText: { color: '#555', fontSize: 14, fontWeight: '600' },
-  modeBtnTextActive: { color: '#E85D3A' },
-  modeBadge: {
-    minWidth: 20, height: 20, borderRadius: 10,
-    backgroundColor: '#1A1A1A', alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 4,
+  searchClearText: {
+    color: '#555',
+    fontSize: 14,
   },
-  modeBadgeActive: { backgroundColor: '#E85D3A' },
-  modeBadgeText: { color: '#555', fontSize: 10, fontWeight: '700' },
-  modeBadgeTextActive: { color: '#fff' },
   tabs: {
     flexDirection: 'row', paddingHorizontal: 24, gap: 8,
     marginTop: 12, marginBottom: 4,
   },
   tab: {
     paddingHorizontal: 14, paddingVertical: 7,
-    borderRadius: 20, backgroundColor: '#111', borderWidth: 1, borderColor: '#222',
+    borderRadius: 10, backgroundColor: '#111', borderWidth: 1, borderColor: '#222',
   },
   tabActive: { backgroundColor: '#1A1A1A', borderColor: '#E85D3A' },
   tabText: { color: '#555', fontSize: 12, fontWeight: '600' },
   tabTextActive: { color: '#E85D3A' },
   drillButton: {
     marginHorizontal: 24, marginTop: 12, marginBottom: 4,
-    backgroundColor: '#E85D3A', borderRadius: 12,
+    backgroundColor: '#E85D3A', borderRadius: 8,
     paddingVertical: 12, alignItems: 'center',
   },
   drillButtonText: { color: '#fff', fontSize: 14, fontWeight: '700', letterSpacing: 0.3 },
@@ -861,7 +978,7 @@ const styles = StyleSheet.create({
   separator: { height: 8 },
   kanjiCard: {
     backgroundColor: '#111',
-    borderRadius: 14,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#1A1A1A',
     padding: 16,
@@ -1016,11 +1133,20 @@ const styles = StyleSheet.create({
   pillLabel: { fontSize: 10, color: '#444' },
   sentenceCard: {
     backgroundColor: '#111',
-    borderRadius: 16,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#1A1A1A',
     padding: 18,
     gap: 12,
+  },
+  sentenceCardHighlighted: {
+    borderColor: '#E85D3A',
+    borderWidth: 2,
+    backgroundColor: 'rgba(232, 93, 58, 0.05)',
+  },
+  sentenceCardPlaying: {
+    borderColor: '#4A90E2',
+    backgroundColor: 'rgba(74, 144, 226, 0.05)',
   },
   kanjiChipsRow: {
     flexDirection: 'row',
@@ -1036,6 +1162,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     gap: 2,
+  },
+  kanjiChipPlaying: {
+    borderColor: '#4A90E2',
+    backgroundColor: '#1A2A3A',
   },
   kanjiChipWord: {
     color: '#EFEFEF',
@@ -1093,7 +1223,7 @@ const styles = StyleSheet.create({
   addListButton: {
     width: 40,
     height: 40,
-    borderRadius: 20,
+    borderRadius: 10,
     backgroundColor: '#1A1A1A',
     borderWidth: 2,
     borderColor: '#E85D3A',
@@ -1104,7 +1234,7 @@ const styles = StyleSheet.create({
   addListButtonSmall: {
     width: 32,
     height: 32,
-    borderRadius: 16,
+    borderRadius: 10,
     backgroundColor: '#1A1A1A',
     borderWidth: 2,
     borderColor: '#E85D3A',
@@ -1120,7 +1250,7 @@ const styles = StyleSheet.create({
   listBadge: {
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 16,
+    borderRadius: 10,
     flexDirection: 'row',
     alignItems: 'center',
   },
@@ -1141,7 +1271,7 @@ const styles = StyleSheet.create({
   listCheckbox: {
     width: 28,
     height: 28,
-    borderRadius: 14,
+    borderRadius: 10,
     backgroundColor: '#1A1A1A',
     borderWidth: 2,
     borderColor: '#333',
@@ -1166,7 +1296,7 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: '#111',
-    borderRadius: 16,
+    borderRadius: 10,
     padding: 24,
     width: '100%',
     maxWidth: 400,
@@ -1199,7 +1329,7 @@ const styles = StyleSheet.create({
   colorOption: {
     width: 40,
     height: 40,
-    borderRadius: 20,
+    borderRadius: 10,
     borderWidth: 3,
     borderColor: 'transparent',
   },

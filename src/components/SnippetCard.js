@@ -4,6 +4,8 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
+  Modal,
+  ScrollView,
 } from 'react-native';
 import { toRomaji } from 'wanakana';
 import { speakJapanese, stopSpeaking } from '../services/tts';
@@ -27,12 +29,16 @@ function toHepburn(kana) {
   return r;
 }
 
-export default function SnippetCard({ snippet }) {
+export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [], onSaveToList, sentenceListIds = [] }) {
   const { settings } = useSettings();
   const [revealed, setRevealed] = useState({});
   const [speaking, setSpeaking] = useState(false);
   const [showRomaji, setShowRomaji] = useState(false);
+  const [showTranslation, setShowTranslation] = useState(false);
   const [currentSound, setCurrentSound] = useState(null);
+  const [showSaveModal, setShowSaveModal] = useState(false);
+
+  const isInAnyList = sentenceListIds.length > 0;
 
   if (!snippet) return null;
 
@@ -117,81 +123,176 @@ export default function SnippetCard({ snippet }) {
   };
 
   return (
-    <View style={styles.card}>
-      {/* Practice Stats */}
-      {best_grade && practice_count && (
-        <View style={styles.statsHeader}>
-          <Text style={styles.statsText}>
-            {best_grade} {practice_count}x
-          </Text>
-          {last_practiced_at && (
-            <Text style={styles.lastPracticedText}>
-              {formatLastPracticed(last_practiced_at)}
-            </Text>
-          )}
+    <TouchableOpacity
+      style={[styles.card, speaking && styles.cardPlaying]}
+      onLongPress={speak}
+      activeOpacity={1}
+      delayLongPress={300}
+    >
+      {/* Hold indicator */}
+      <View style={styles.holdIndicator}>
+        <Text style={[styles.holdText, speaking && styles.holdTextActive]}>
+          {speaking ? '🔊 Playing' : 'Hold to speak'}
+        </Text>
+      </View>
+
+      {/* Top right info button */}
+      {onViewDetail && (
+        <View style={styles.topRightInfo}>
+          <TouchableOpacity
+            style={styles.iconButton}
+            onPress={onViewDetail}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.detailIcon}>ⓘ</Text>
+          </TouchableOpacity>
         </View>
       )}
 
-      {/* Japanese text with tappable words */}
-      <View style={styles.japaneseContainer}>
+      {/* Bottom left button - save to list */}
+      {onSaveToList && sentenceLists.length > 0 && (
+        <View style={styles.bottomLeftButtons}>
+          <TouchableOpacity
+            style={[styles.iconButton, isInAnyList && styles.iconButtonSaved]}
+            onPress={() => setShowSaveModal(true)}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.iconButtonText, isInAnyList && styles.iconButtonTextSaved]}>
+              {isInAnyList ? '✓' : '+'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Bottom right buttons */}
+      <View style={styles.topRightButtons}>
+        {/* ro/en toggle - shows when translation is visible */}
+        {showTranslation && (
+          <TouchableOpacity
+            style={styles.iconButton}
+            onPress={() => setShowRomaji((v) => !v)}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.roEnToggleText}>{showRomaji ? 'EN' : 'RO'}</Text>
+          </TouchableOpacity>
+        )}
+
+        <TouchableOpacity
+          style={[styles.iconButton, showTranslation && styles.iconButtonActive]}
+          onPress={() => setShowTranslation((v) => !v)}
+          activeOpacity={0.7}
+        >
+          <Text style={[styles.iconButtonText, showTranslation && styles.iconButtonTextActive]}>訳</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Save to list modal */}
+      <Modal
+        visible={showSaveModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowSaveModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.saveModalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowSaveModal(false)}
+        >
+          <View style={styles.saveModalContent} onStartShouldSetResponder={() => true}>
+            <Text style={styles.saveModalTitle}>Add to list</Text>
+            <ScrollView style={styles.saveModalScroll}>
+              {sentenceLists.map(list => {
+                const isInList = sentenceListIds.includes(list.id);
+                return (
+                  <TouchableOpacity
+                    key={list.id}
+                    style={[
+                      styles.saveListOption,
+                      { borderLeftColor: list.color },
+                      isInList && styles.saveListOptionActive
+                    ]}
+                    onPress={() => {
+                      onSaveToList?.(list.id, isInList);
+                      if (!isInList) setShowSaveModal(false);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.saveListName}>{list.name}</Text>
+                    {isInList && <Text style={styles.saveListCheck}>✓</Text>}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+        {/* Practice Stats */}
+        {best_grade && practice_count && (
+          <View style={styles.statsHeader}>
+            <Text style={styles.statsText}>
+              {best_grade} {practice_count}x
+            </Text>
+            {last_practiced_at && (
+              <Text style={styles.lastPracticedText}>
+                {formatLastPracticed(last_practiced_at)}
+              </Text>
+            )}
+          </View>
+        )}
+
+      {/* Japanese text with tappable words - modular paired layout */}
+      <View style={[styles.wordsGrid, showTranslation && styles.wordsGridSpaced]}>
         {segments.map((seg, i) => {
           const info = wordMap[seg.text];
           const isRevealed = revealed[seg.text];
 
-          if (!info) {
-            // Non-kanji segment — just render
-            return (
-              <Text key={i} style={styles.plainText}>
-                {seg.text}
-              </Text>
-            );
-          }
-
           return (
             <TouchableOpacity
               key={i}
-              onPress={() => toggleWord(seg.text)}
-              style={[styles.wordWrapper, isRevealed && styles.wordWrapperActive]}
-              activeOpacity={0.7}
+              onPress={() => info && toggleWord(seg.text)}
+              style={styles.wordModule}
+              activeOpacity={info ? 0.7 : 1}
+              disabled={!info}
             >
-              {isRevealed && (
-                <Text style={styles.furigana}>{info.furigana}</Text>
+              {/* Furigana */}
+              {isRevealed && info && (
+                <Text style={styles.furiganaAligned}>{info.furigana}</Text>
               )}
-              <Text style={[styles.kanjiText, isRevealed && styles.kanjiHighlighted]}>
+
+              {/* Japanese word */}
+              <Text style={[
+                info ? styles.kanjiText : styles.plainText,
+                isRevealed && info && styles.kanjiHighlighted
+              ]}>
                 {seg.text}
               </Text>
-              {isRevealed && (
-                <View style={styles.meaningBubble}>
-                  <Text style={styles.meaningText}>{info.meaning}</Text>
-                </View>
+
+              {/* Translation/Romaji below */}
+              {info && showTranslation && (
+                <Text style={showRomaji ? styles.romajiAligned : styles.meaningAligned}>
+                  {showRomaji ? toHepburn(info.furigana) : info.meaning}
+                </Text>
               )}
             </TouchableOpacity>
           );
         })}
       </View>
 
-      {/* English / Romaji toggle */}
-      <View style={styles.divider} />
-      <View style={styles.bottomRow}>
-        <TouchableOpacity
-          onPress={() => setShowRomaji((v) => !v)}
-          activeOpacity={0.7}
-          style={styles.translationToggle}
-        >
-          {showRomaji ? (
-            <Text style={styles.romajiText}>{romaji}</Text>
-          ) : (
-            <Text style={styles.englishText}>{english}</Text>
-          )}
-          <Text style={styles.toggleHint}>{showRomaji ? 'EN' : 'RO'}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={speak} style={styles.speakButton} activeOpacity={0.7}>
-          <Text style={[styles.speakIcon, speaking && styles.speakIconActive]}>
-            {speaking ? '⏹' : '🔊'}
-          </Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+      {/* Full sentence translation */}
+      {showTranslation && (
+        <>
+          <View style={styles.divider} />
+          <View style={styles.translationContainer}>
+            {showRomaji ? (
+              <Text style={styles.romajiText}>{romaji}</Text>
+            ) : (
+              <Text style={styles.englishText}>{english}</Text>
+            )}
+          </View>
+        </>
+      )}
+    </TouchableOpacity>
   );
 }
 
@@ -251,11 +352,86 @@ const ROW_H = 40; // fixed height every character occupies — nothing ever shif
 const styles = StyleSheet.create({
   card: {
     backgroundColor: '#111111',
-    borderRadius: 16,
+    borderRadius: 10,
     padding: 24,
     borderWidth: 1,
     borderColor: '#222222',
     width: '100%',
+    position: 'relative',
+  },
+  cardPlaying: {
+    borderColor: '#4A90E2',
+    backgroundColor: 'rgba(74, 144, 226, 0.05)',
+  },
+  holdIndicator: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+  },
+  holdText: {
+    fontSize: 10,
+    color: '#444',
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  },
+  holdTextActive: {
+    color: '#4A90E2',
+  },
+  topRightInfo: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+  },
+  bottomLeftButtons: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
+  },
+  roEnToggleText: {
+    fontSize: 10,
+    color: '#E85D3A',
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  topRightButtons: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+    flexDirection: 'row',
+    gap: 6,
+  },
+  iconButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    backgroundColor: '#1A1A1A',
+    borderWidth: 1,
+    borderColor: '#333',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconButtonActive: {
+    backgroundColor: '#E85D3A',
+    borderColor: '#E85D3A',
+  },
+  iconButtonText: {
+    fontSize: 12,
+    color: '#888',
+    fontWeight: '600',
+  },
+  iconButtonTextActive: {
+    color: '#FFF',
+  },
+  iconButtonSaved: {
+    backgroundColor: '#4CAF50',
+    borderColor: '#4CAF50',
+  },
+  iconButtonTextSaved: {
+    color: '#FFF',
+  },
+  detailIcon: {
+    fontSize: 15,
+    color: '#AAA',
   },
   statsHeader: {
     flexDirection: 'row',
@@ -277,116 +453,135 @@ const styles = StyleSheet.create({
     color: '#666',
     fontStyle: 'italic',
   },
-  japaneseContainer: {
+  wordsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'center',
+    alignItems: 'flex-start',
+    paddingTop: 4,
+    paddingBottom: 16,
+    gap: 0,
+  },
+  wordsGridSpaced: {
+    gap: 16,
+  },
+  wordModule: {
     alignItems: 'center',
+    paddingHorizontal: 0,
     paddingTop: 16,
-    paddingBottom: 32,
-    rowGap: 28,
+    paddingBottom: 8,
+    position: 'relative',
   },
   plainText: {
     fontSize: 26,
     color: '#EFEFEF',
     fontWeight: '400',
-    height: ROW_H,
-    lineHeight: ROW_H,
     letterSpacing: 1,
-  },
-  wordWrapper: {
-    height: ROW_H,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginHorizontal: 1,
-    zIndex: 1,
-    elevation: 1,
-  },
-  wordWrapperActive: {
-    zIndex: 100,
-    elevation: 100,
-  },
-  furigana: {
-    position: 'absolute',
-    top: -13,
-    fontSize: 11,
-    color: '#E85D3A',
-    letterSpacing: 0.5,
-    zIndex: 10,
   },
   kanjiText: {
     fontSize: 26,
     color: '#EFEFEF',
     fontWeight: '400',
-    lineHeight: ROW_H,
     letterSpacing: 1,
+    marginBottom: 4,
   },
   kanjiHighlighted: {
     color: '#E85D3A',
   },
-  meaningBubble: {
+  furiganaAligned: {
     position: 'absolute',
-    top: ROW_H - 2,
-    backgroundColor: '#E85D3A',
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    minWidth: 60,
-    zIndex: 10,
-    elevation: 10,
-  },
-  meaningText: {
-    fontSize: 10,
-    color: '#fff',
+    top: 0,
+    left: 0,
+    right: 0,
+    fontSize: 11,
+    color: '#E85D3A',
+    letterSpacing: 0.5,
     textAlign: 'center',
   },
+  meaningAligned: {
+    fontSize: 11,
+    color: '#888',
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
+  romajiAligned: {
+    fontSize: 11,
+    color: '#E85D3A',
+    letterSpacing: 0.3,
+    textAlign: 'center',
+  },
+
+  // Full sentence translation
   divider: {
     height: 1,
     backgroundColor: '#222222',
-    marginVertical: 16,
+    marginVertical: 12,
   },
-  bottomRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  translationToggle: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  translationContainer: {
+    paddingBottom: 20,
   },
   englishText: {
-    flex: 1,
     fontSize: 15,
     color: '#888888',
     lineHeight: 22,
     fontStyle: 'italic',
   },
   romajiText: {
-    flex: 1,
     fontSize: 15,
     color: '#E85D3A',
     lineHeight: 22,
     letterSpacing: 0.3,
   },
-  toggleHint: {
-    fontSize: 10,
-    color: '#444',
-    fontWeight: '700',
-    letterSpacing: 1,
+
+  // Save modal
+  saveModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
   },
-  speakButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#1A1A1A',
+  saveModalContent: {
+    backgroundColor: '#111',
+    borderRadius: 10,
+    padding: 20,
+    width: '100%',
+    maxWidth: 300,
+    maxHeight: 400,
     borderWidth: 1,
     borderColor: '#333',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
-  speakIcon: { fontSize: 16 },
-  speakIconActive: { opacity: 0.6 },
+  saveModalTitle: {
+    color: '#EFEFEF',
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 16,
+  },
+  saveModalScroll: {
+    maxHeight: 300,
+  },
+  saveListOption: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 8,
+    borderLeftWidth: 4,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  saveListOptionActive: {
+    backgroundColor: '#222',
+  },
+  saveListName: {
+    color: '#EFEFEF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  saveListCheck: {
+    color: '#4CAF50',
+    fontSize: 18,
+    fontWeight: '700',
+  },
 });

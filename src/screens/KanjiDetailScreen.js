@@ -24,6 +24,7 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
   const [showStrokeOrder, setShowStrokeOrder] = useState(false);
   const [playingReading, setPlayingReading] = useState(null);
   const [currentSound, setCurrentSound] = useState(null);
+  const [showAllReadings, setShowAllReadings] = useState(false);
 
   useEffect(() => {
     if (!user?.id) { setLoading(false); return; }
@@ -46,13 +47,15 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
     });
   };
 
-  const practiceSentence = (sentence) => {
-    navigation.navigate('Practice', {
-      rounds: 1,
-      difficulty: 'Mixed',
-      domain: 'Any',
-      singleSentence: sentence,
+  const viewSentence = (sentenceId) => {
+    navigation.navigate('Study', {
+      initialMode: 'sentences',
+      highlightSentenceId: sentenceId,
     });
+  };
+
+  const viewSentenceDetail = (sentence) => {
+    navigation.navigate('SentenceDetail', { sentence });
   };
 
   const handleReadingLongPress = async (reading) => {
@@ -172,53 +175,70 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
             </View>
 
             {/* Dictionary readings */}
-            {kd?.dictReadings && kd.dictReadings.length > 0 && kd.dictReadings.map((reading, i) => {
-              const hiraganaReading = toHiragana(reading);
-              return (
+            {kd?.dictReadings && kd.dictReadings.length > 0 && kd.dictReadings
+              .slice(0, showAllReadings ? undefined : 4)
+              .map((reading, i) => {
+                const hiraganaReading = toHiragana(reading);
+                return (
+                  <TouchableOpacity
+                    key={`dict-${reading}-${i}`}
+                    style={[
+                      styles.readingChip,
+                      playingReading === hiraganaReading && styles.readingChipPlaying
+                    ]}
+                    onLongPress={() => handleReadingLongPress(hiraganaReading)}
+                    activeOpacity={0.7}
+                    delayLongPress={100}
+                  >
+                    <Text style={styles.readingChipKanji}>{kanji}</Text>
+                    <Text style={styles.readingChipText}>{hiraganaReading}</Text>
+                    <Text style={styles.readingChipRomaji}>{toRomaji(hiraganaReading)}</Text>
+                    {kd.dictMeanings && kd.dictMeanings.length > 0 && (
+                      <Text style={styles.readingChipMeaning} numberOfLines={2}>
+                        {kd.dictMeanings.slice(0, 2).join(', ')}
+                      </Text>
+                    )}
+                    <Text style={styles.readingChipHint}>🔊</Text>
+                  </TouchableOpacity>
+                );
+              })}
+
+            {/* Example words */}
+            {kd?.exampleWords && kd.exampleWords.length > 0 && kd.exampleWords
+              .slice(0, showAllReadings ? undefined : Math.max(0, 4 - (kd?.dictReadings?.length || 0)))
+              .map((w, i) => (
                 <TouchableOpacity
-                  key={`dict-${reading}-${i}`}
+                  key={`example-${w.word}-${i}`}
                   style={[
                     styles.readingChip,
-                    playingReading === hiraganaReading && styles.readingChipPlaying
+                    playingReading === w.furigana && styles.readingChipPlaying
                   ]}
-                  onLongPress={() => handleReadingLongPress(hiraganaReading)}
+                  onLongPress={() => handleReadingLongPress(w.furigana)}
                   activeOpacity={0.7}
                   delayLongPress={100}
                 >
-                  <Text style={styles.readingChipKanji}>{kanji}</Text>
-                  <Text style={styles.readingChipText}>{hiraganaReading}</Text>
-                  <Text style={styles.readingChipRomaji}>{toRomaji(hiraganaReading)}</Text>
-                  {kd.dictMeanings && kd.dictMeanings.length > 0 && (
-                    <Text style={styles.readingChipMeaning} numberOfLines={2}>
-                      {kd.dictMeanings.slice(0, 2).join(', ')}
-                    </Text>
+                  <Text style={styles.readingChipKanji}>{w.word}</Text>
+                  <Text style={styles.readingChipText}>{w.furigana}</Text>
+                  <Text style={styles.readingChipRomaji}>{toRomaji(w.furigana)}</Text>
+                  {w.meaning && (
+                    <Text style={styles.readingChipMeaning}>{w.meaning}</Text>
                   )}
                   <Text style={styles.readingChipHint}>🔊</Text>
                 </TouchableOpacity>
-              );
-            })}
+              ))}
 
-            {/* Example words */}
-            {kd?.exampleWords && kd.exampleWords.length > 0 && kd.exampleWords.map((w, i) => (
+            {/* Expand button */}
+            {((kd?.dictReadings?.length || 0) + (kd?.exampleWords?.length || 0) > 4) && (
               <TouchableOpacity
-                key={`example-${w.word}-${i}`}
-                style={[
-                  styles.readingChip,
-                  playingReading === w.furigana && styles.readingChipPlaying
-                ]}
-                onLongPress={() => handleReadingLongPress(w.furigana)}
+                style={styles.expandButton}
+                onPress={() => setShowAllReadings(!showAllReadings)}
                 activeOpacity={0.7}
-                delayLongPress={100}
               >
-                <Text style={styles.readingChipKanji}>{w.word}</Text>
-                <Text style={styles.readingChipText}>{w.furigana}</Text>
-                <Text style={styles.readingChipRomaji}>{toRomaji(w.furigana)}</Text>
-                {w.meaning && (
-                  <Text style={styles.readingChipMeaning}>{w.meaning}</Text>
-                )}
-                <Text style={styles.readingChipHint}>🔊</Text>
+                <Text style={styles.expandButtonText}>
+                  {showAllReadings ? 'Show less' : `Show ${(kd?.dictReadings?.length || 0) + (kd?.exampleWords?.length || 0) - 4} more`}
+                </Text>
               </TouchableOpacity>
-            ))}
+            )}
           </View>
 
           {/* Stats */}
@@ -249,7 +269,7 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
                 <TouchableOpacity
                   key={s.id ?? i}
                   style={styles.sentenceCard}
-                  onPress={() => practiceSentence(s)}
+                  onPress={() => viewSentence(s.id)}
                   activeOpacity={0.8}
                 >
                   <SentenceWithHighlight sentence={s.japanese} target={kanji} words={s.words} />
@@ -258,7 +278,7 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
                     {s.attempts > 1 && (
                       <Text style={styles.sentenceAttempts}>{s.attempts} attempts</Text>
                     )}
-                    <Text style={styles.practiceHint}>Tap to practice →</Text>
+                    <Text style={styles.practiceHint}>Tap to view →</Text>
                   </View>
                 </TouchableOpacity>
               ))}
@@ -275,13 +295,13 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
                 <TouchableOpacity
                   key={s.id ?? i}
                   style={styles.sentenceCard}
-                  onPress={() => practiceSentence(s)}
+                  onPress={() => viewSentenceDetail(s)}
                   activeOpacity={0.8}
                 >
                   <SentenceWithHighlight sentence={s.japanese} target={kanji} words={s.words} />
                   <EnglishWithHighlight english={s.english} words={s.words} target={kanji} />
                   <View style={styles.sentenceFooter}>
-                    <Text style={styles.practiceHint}>Tap to practice →</Text>
+                    <Text style={styles.practiceHint}>Tap to view →</Text>
                   </View>
                 </TouchableOpacity>
               ))}
@@ -468,12 +488,12 @@ const styles = StyleSheet.create({
     alignItems: 'center', paddingHorizontal: 24, paddingTop: 16, paddingBottom: 12,
   },
   backText: { color: '#555', fontSize: 14 },
-  logo: { fontSize: 20, color: '#EFEFEF', fontWeight: '800', letterSpacing: -0.5 },
+  logo: { fontSize: 20, color: '#EFEFEF', fontWeight: '900', letterSpacing: -0.5 },
   logoAccent: { color: '#E85D3A' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   content: { padding: 24, paddingBottom: 60 },
   heroBox: {
-    backgroundColor: '#111', borderRadius: 20, borderWidth: 1, borderColor: '#222',
+    backgroundColor: '#111', borderRadius: 10, borderWidth: 1, borderColor: '#222',
     marginBottom: 20, padding: 24,
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -582,19 +602,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row', gap: 10, marginBottom: 20,
   },
   statBox: {
-    flex: 1, backgroundColor: '#111', borderRadius: 14, borderWidth: 1, borderColor: '#1A1A1A',
+    flex: 1, backgroundColor: '#111', borderRadius: 10, borderWidth: 1, borderColor: '#1A1A1A',
     paddingVertical: 14, alignItems: 'center', gap: 4,
   },
-  statValue: { color: '#EFEFEF', fontSize: 20, fontWeight: '800' },
+  statValue: { color: '#EFEFEF', fontSize: 20, fontWeight: '900' },
   statValueAccent: { color: '#E85D3A' },
   statLabel: { color: '#555', fontSize: 9, letterSpacing: 0.5, textTransform: 'uppercase' },
   drillButton: {
-    backgroundColor: '#E85D3A', borderRadius: 14,
+    backgroundColor: '#E85D3A', borderRadius: 10,
     paddingVertical: 16, alignItems: 'center', marginBottom: 24,
   },
   drillButtonText: { color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: 0.3 },
   sentenceCard: {
-    backgroundColor: '#111', borderRadius: 14, borderWidth: 1, borderColor: '#1A1A1A',
+    backgroundColor: '#111', borderRadius: 10, borderWidth: 1, borderColor: '#1A1A1A',
     padding: 16, marginBottom: 8, gap: 6,
   },
   sentenceJapanese: { color: '#EFEFEF', fontSize: 18, lineHeight: 28 },
@@ -617,7 +637,7 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: '#2A2A2A',
-    borderRadius: 20,
+    borderRadius: 10,
     width: '100%',
     maxWidth: 400,
     padding: 24,
@@ -641,7 +661,7 @@ const styles = StyleSheet.create({
   modalClose: {
     width: 32,
     height: 32,
-    borderRadius: 16,
+    borderRadius: 10,
     backgroundColor: '#1A1A1A',
     alignItems: 'center',
     justifyContent: 'center',
@@ -653,5 +673,19 @@ const styles = StyleSheet.create({
   },
   modalBody: {
     alignItems: 'center',
+  },
+  expandButton: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#333',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    alignSelf: 'center',
+  },
+  expandButtonText: {
+    color: '#E85D3A',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

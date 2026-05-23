@@ -8,6 +8,9 @@ import {
   SafeAreaView,
   ScrollView,
   Animated,
+  Modal,
+  Alert,
+  BackHandler,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { speakJapanese, stopSpeaking } from '../services/tts';
@@ -95,7 +98,7 @@ const KANA_SETS = {
   'katakana-advanced': KATAKANA_ADVANCED,
 };
 
-export default function KanaPractice({ onClose }) {
+export default function KanaPractice({ onClose, navigation }) {
   const { settings } = useSettings();
   const [mode, setMode] = useState(null); // null | 'hiragana' | 'katakana' | 'hiragana-advanced' | 'katakana-advanced'
   const [currentKana, setCurrentKana] = useState('');
@@ -103,6 +106,14 @@ export default function KanaPractice({ onClose }) {
   const [userInput, setUserInput] = useState('');
   const [showAnswer, setShowAnswer] = useState(false);
   const [currentSound, setCurrentSound] = useState(null);
+
+  // Progress tracking
+  const [currentRound, setCurrentRound] = useState(1);
+  const [totalRounds] = useState(10); // Default 10 rounds per session
+  const [attemptCount, setAttemptCount] = useState(0);
+  const [roundResults, setRoundResults] = useState([]);
+  const [roundStartTime, setRoundStartTime] = useState(Date.now());
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
 
   const inputRef = useRef(null);
   const glowAnim = useRef(new Animated.Value(0)).current;
@@ -117,6 +128,23 @@ export default function KanaPractice({ onClose }) {
       }
     };
   }, [currentSound]);
+
+  // Handle hardware back button
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener(
+      'hardwareBackPress',
+      () => {
+        if (roundResults.length > 0) {
+          setShowExitConfirm(true);
+        } else {
+          onClose();
+        }
+        return true; // Prevent default back behavior
+      }
+    );
+
+    return () => backHandler.remove();
+  }, [roundResults.length, onClose]);
 
   // Initialize practice mode
   const startPractice = (selectedMode) => {
@@ -133,6 +161,8 @@ export default function KanaPractice({ onClose }) {
     setUserInput('');
     setShowAnswer(false);
     setIsCorrectAnswer(null);
+    setAttemptCount(0);
+    setRoundStartTime(Date.now());
     setTimeout(() => inputRef.current?.focus(), 100);
   };
 
@@ -157,6 +187,21 @@ export default function KanaPractice({ onClose }) {
       setShowAnswer(true);
       setIsCorrectAnswer(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      // Calculate grade: ○ for first try, △ for retry
+      const grade = attemptCount === 0 ? '○' : '△';
+      const timeMs = Date.now() - roundStartTime;
+
+      // Save round result
+      const result = {
+        round: currentRound,
+        kana: currentKana,
+        romaji: correctRomaji,
+        grade,
+        timeMs,
+        skipped: false,
+      };
+      setRoundResults([...roundResults, result]);
 
       // Speak the Japanese kana character
       try {
@@ -197,11 +242,18 @@ export default function KanaPractice({ onClose }) {
 
       // Move to next after showing answer briefly
       setTimeout(() => {
-        loadNextKana(mode);
+        if (currentRound >= totalRounds) {
+          // Session complete - will navigate to summary
+          navigateToSummary([...roundResults, result]);
+        } else {
+          setCurrentRound(currentRound + 1);
+          loadNextKana(mode);
+        }
       }, 600);
     } else {
       setShowAnswer(true);
       setIsCorrectAnswer(false);
+      setAttemptCount(attemptCount + 1);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
 
       // Speak the correct Japanese kana character
@@ -259,6 +311,85 @@ export default function KanaPractice({ onClose }) {
       }, 1500);
     }
   };
+
+  const handleSkip = () => {
+    const timeMs = Date.now() - roundStartTime;
+    const result = {
+      round: currentRound,
+      kana: currentKana,
+      romaji: correctRomaji,
+      grade: '×',
+      timeMs,
+      skipped: true,
+    };
+
+    const updatedResults = [...roundResults, result];
+    setRoundResults(updatedResults);
+
+    if (currentRound >= totalRounds) {
+      navigateToSummary(updatedResults);
+    } else {
+      setCurrentRound(currentRound + 1);
+      loadNextKana(mode);
+    }
+  };
+
+  const handleClose = () => {
+    if (roundResults.length > 0) {
+      setShowExitConfirm(true);
+    } else {
+      onClose();
+    }
+  };
+
+  const navigateToSummary = (results) => {
+    navigation.navigate('KanaPracticeSummary', {
+      results,
+      mode,
+    });
+    setTimeout(() => onClose(), 10);
+  };
+
+  // Exit confirmation modal
+  const ExitConfirmModal = () => (
+    <Modal
+      visible={showExitConfirm}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setShowExitConfirm(false)}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <Text style={styles.modalTitle}>Save your progress?</Text>
+          <Text style={styles.modalMessage}>
+            You've completed {roundResults.length} of {totalRounds} rounds
+          </Text>
+          <View style={styles.modalButtons}>
+            <TouchableOpacity
+              style={[styles.modalButton, styles.modalButtonDiscard]}
+              onPress={() => {
+                setShowExitConfirm(false);
+                onClose();
+              }}
+            >
+              <Text style={styles.modalButtonText}>Discard & Exit</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.modalButton, styles.modalButtonSave]}
+              onPress={() => {
+                setShowExitConfirm(false);
+                navigateToSummary(roundResults);
+              }}
+            >
+              <Text style={[styles.modalButtonText, styles.modalButtonTextSave]}>
+                Save & View Results
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
 
   // Mode selection screen
   if (!mode) {
@@ -333,8 +464,9 @@ export default function KanaPractice({ onClose }) {
 
   return (
     <SafeAreaView style={styles.safe}>
+      <ExitConfirmModal />
       <View style={styles.header}>
-        <TouchableOpacity onPress={onClose}>
+        <TouchableOpacity onPress={handleClose}>
           <Text style={styles.closeText}>✕</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>
@@ -343,7 +475,12 @@ export default function KanaPractice({ onClose }) {
            mode === 'hiragana-advanced' ? 'Hiragana Advanced' :
            'Katakana Advanced'}
         </Text>
-        <View style={{ width: 40 }} />
+        <Text style={styles.scoreText}>{currentRound}/{totalRounds}</Text>
+      </View>
+
+      {/* Progress bar */}
+      <View style={styles.progressTrack}>
+        <View style={[styles.progressFill, { width: `${(currentRound / totalRounds) * 100}%` }]} />
       </View>
 
       <View style={styles.practiceContainer}>
@@ -383,7 +520,7 @@ export default function KanaPractice({ onClose }) {
           <Text style={styles.submitButtonText}>Check</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.skipButton} onPress={() => loadNextKana(mode)}>
+        <TouchableOpacity style={styles.skipButton} onPress={handleSkip}>
           <Text style={styles.skipButtonText}>Skip →</Text>
         </TouchableOpacity>
       </View>
@@ -420,8 +557,16 @@ const styles = StyleSheet.create({
     color: '#E85D3A',
     fontSize: 15,
     fontWeight: '600',
-    width: 40,
+    minWidth: 50,
     textAlign: 'right',
+  },
+  progressTrack: {
+    height: 3,
+    backgroundColor: '#1A1A1A',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#E85D3A',
   },
 
   // Mode selection
@@ -439,7 +584,7 @@ const styles = StyleSheet.create({
   },
   modeCard: {
     backgroundColor: '#111',
-    borderRadius: 20,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#222',
     padding: 32,
@@ -492,7 +637,7 @@ const styles = StyleSheet.create({
     bottom: -40,
     paddingHorizontal: 24,
     paddingVertical: 12,
-    borderRadius: 12,
+    borderRadius: 8,
     borderWidth: 2,
     borderColor: '#4CAF50',
   },
@@ -504,7 +649,7 @@ const styles = StyleSheet.create({
   },
   input: {
     backgroundColor: '#111',
-    borderRadius: 12,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#333',
     padding: 16,
@@ -515,7 +660,7 @@ const styles = StyleSheet.create({
   },
   submitButton: {
     backgroundColor: '#E85D3A',
-    borderRadius: 12,
+    borderRadius: 8,
     paddingVertical: 16,
     alignItems: 'center',
   },
@@ -535,5 +680,60 @@ const styles = StyleSheet.create({
   skipButtonText: {
     color: '#555',
     fontSize: 14,
+  },
+
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalContent: {
+    backgroundColor: '#111',
+    borderRadius: 10,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  modalTitle: {
+    color: '#EFEFEF',
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  modalMessage: {
+    color: '#888',
+    fontSize: 14,
+    marginBottom: 24,
+    textAlign: 'center',
+  },
+  modalButtons: {
+    gap: 12,
+  },
+  modalButton: {
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  modalButtonDiscard: {
+    backgroundColor: '#1A1A1A',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  modalButtonSave: {
+    backgroundColor: '#E85D3A',
+  },
+  modalButtonText: {
+    color: '#888',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  modalButtonTextSave: {
+    color: '#FFF',
   },
 });

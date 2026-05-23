@@ -259,7 +259,7 @@ const styles = StyleSheet.create({
   inputWrapper: {
     backgroundColor: '#111111',
     borderWidth: 1.5,
-    borderRadius: 12,
+    borderRadius: 8,
     position: 'relative',
     overflow: 'hidden',
   },
@@ -320,7 +320,7 @@ const styles = StyleSheet.create({
   },
   button: {
     marginTop: 14, backgroundColor: '#E85D3A',
-    borderRadius: 10, paddingVertical: 14, alignItems: 'center',
+    borderRadius: 8, paddingVertical: 14, alignItems: 'center',
   },
   buttonDisabled: { backgroundColor: '#222' },
   buttonText: { color: '#fff', fontSize: 15, fontWeight: '600', letterSpacing: 1 },

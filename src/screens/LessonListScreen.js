@@ -78,12 +78,22 @@ export default function LessonListScreen({ navigation, route, user }) {
               const isComplete = lesson.isComplete;
               const isStarted = lesson.masteredCount > 0;
 
+              // Lesson 1 is always unlocked, others require previous lesson completion
+              const isFirstLesson = lesson.order_index === 1;
+              const previousLesson = index > 0 ? lessons[index - 1] : null;
+              const isUnlocked = isFirstLesson || (previousLesson && previousLesson.isComplete);
+
               return (
                 <TouchableOpacity
                   key={lesson.id}
-                  style={[styles.lessonCard, isComplete && styles.lessonCardComplete]}
-                  onPress={() => startLesson(lesson)}
-                  activeOpacity={0.85}
+                  style={[
+                    styles.lessonCard,
+                    isComplete && styles.lessonCardComplete,
+                    !isUnlocked && styles.lessonCardLocked,
+                  ]}
+                  onPress={() => isUnlocked ? startLesson(lesson) : null}
+                  activeOpacity={isUnlocked ? 0.85 : 1}
+                  disabled={!isUnlocked}
                 >
                   <View style={styles.lessonHeader}>
                     <View style={styles.lessonNumber}>
@@ -98,11 +108,19 @@ export default function LessonListScreen({ navigation, route, user }) {
                   </View>
 
                   <View style={styles.lessonFooter}>
-                    <Text style={styles.sentenceCount}>
+                    <Text style={[
+                      styles.sentenceCount,
+                      !isUnlocked && styles.sentenceCountLocked
+                    ]}>
                       {lesson.sentenceCount} sentence{lesson.sentenceCount !== 1 ? 's' : ''}
                     </Text>
 
-                    {isStarted ? (
+                    {!isUnlocked ? (
+                      <View style={styles.lockedInfo}>
+                        <Text style={styles.lockIcon}>🔒</Text>
+                        <Text style={styles.lockedText}>Locked</Text>
+                      </View>
+                    ) : isStarted ? (
                       <View style={styles.progressInfo}>
                         {isComplete ? (
                           <Text style={styles.completeText}>✓ Complete</Text>
@@ -144,7 +162,7 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
   },
   backText: { color: '#555', fontSize: 14 },
-  logo: { fontSize: 22, color: '#EFEFEF', fontWeight: '800', letterSpacing: -0.5 },
+  logo: { fontSize: 22, color: '#EFEFEF', fontWeight: '900', letterSpacing: -0.5 },
   logoAccent: { color: '#E85D3A' },
   scroll: { flex: 1 },
   content: { padding: 24, paddingTop: 0 },
@@ -156,7 +174,7 @@ const styles = StyleSheet.create({
   title: {
     color: '#EFEFEF',
     fontSize: 28,
-    fontWeight: '800',
+    fontWeight: '900',
     letterSpacing: -0.5,
     textAlign: 'center',
   },
@@ -173,7 +191,7 @@ const styles = StyleSheet.create({
   lessons: { gap: 12 },
   lessonCard: {
     backgroundColor: '#111',
-    borderRadius: 14,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#222',
     padding: 18,
@@ -181,6 +199,11 @@ const styles = StyleSheet.create({
   lessonCardComplete: {
     borderColor: '#2A4A2A',
     backgroundColor: '#0F150F',
+  },
+  lessonCardLocked: {
+    backgroundColor: '#0A0A0A',
+    borderColor: '#1A1A1A',
+    opacity: 0.5,
   },
   lessonHeader: {
     flexDirection: 'row',
@@ -227,6 +250,9 @@ const styles = StyleSheet.create({
     fontSize: 11,
     letterSpacing: 0.5,
   },
+  sentenceCountLocked: {
+    color: '#333',
+  },
   progressInfo: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -258,5 +284,19 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     letterSpacing: 0.5,
+  },
+  lockedInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  lockIcon: {
+    fontSize: 12,
+    opacity: 0.6,
+  },
+  lockedText: {
+    color: '#444',
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

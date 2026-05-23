@@ -96,12 +96,12 @@ const styles = StyleSheet.create({
   },
   svgWrapper: {
     backgroundColor: '#FFF',
-    borderRadius: 12,
+    borderRadius: 8,
     overflow: 'hidden',
   },
   errorContainer: {
     backgroundColor: '#111',
-    borderRadius: 12,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#222',
   },

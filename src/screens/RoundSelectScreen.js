@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 import DropdownPicker from '../components/DropdownPicker';
 import { supabase } from '../services/supabase';
+import { fetchSentenceLists } from '../services/sentenceLists';
 
 const ROUND_OPTIONS = [
   { key: '5', label: '5 rounds', sub: 'Quick session' },
@@ -16,7 +17,8 @@ const ROUND_OPTIONS = [
   { key: '20', label: '20 rounds', sub: 'Full session' },
 ];
 
-export default function RoundSelectScreen({ navigation }) {
+export default function RoundSelectScreen({ navigation, route }) {
+  const { user } = route.params || {};
   const [rounds, setRounds] = useState('10');
   const [domain, setDomain] = useState('Any');
   const [subtopic, setSubtopic] = useState(null);
@@ -24,35 +26,96 @@ export default function RoundSelectScreen({ navigation }) {
   const [topicOptions, setTopicOptions] = useState([]);
   const [subtopicOptions, setSubtopicOptions] = useState([]);
   const [difficultyOptions, setDifficultyOptions] = useState([]);
+  const [userLists, setUserLists] = useState([]);
+
+  // Helper function to update difficulty options based on available sentences
+  const updateDifficultyOptions = (sentences) => {
+    // Count sentences per JLPT level
+    const levelCounts = {};
+    sentences.forEach(row => {
+      if (row.jlpt_level) {
+        levelCounts[row.jlpt_level] = (levelCounts[row.jlpt_level] || 0) + 1;
+      }
+    });
+
+    const levelOrder = ['N5', 'N4', 'N3', 'N2', 'N1'];
+    const labels = {
+      'N5': 'N5 — Beginner',
+      'N4': 'N4 — Elementary',
+      'N3': 'N3 — Intermediate',
+      'N2': 'N2 — Upper-intermediate',
+      'N1': 'N1 — Advanced',
+    };
+
+    // Only show levels with at least 5 sentences
+    const availableLevels = Object.entries(levelCounts)
+      .filter(([_, count]) => count >= 5)
+      .sort(([a], [b]) => levelOrder.indexOf(a) - levelOrder.indexOf(b))
+      .map(([level, count]) => ({
+        key: level,
+        label: labels[level] || level,
+        sub: `${count} sentence${count !== 1 ? 's' : ''}`,
+      }));
+
+    const totalCount = sentences.length;
+    const difficultyOpts = [
+      { key: 'Mixed', label: 'Mixed', sub: `${totalCount} sentence${totalCount !== 1 ? 's' : ''}` },
+      ...availableLevels,
+    ];
+
+    setDifficultyOptions(difficultyOpts);
+
+    // Reset difficulty to Mixed if current selection isn't available
+    if (difficulty !== 'Mixed' && !availableLevels.find(opt => opt.key === difficulty)) {
+      setDifficulty('Mixed');
+    }
+  };
 
   // Load all topics and difficulties from DB on mount
   useEffect(() => {
     async function loadInitialData() {
+      // Fetch user's sentence lists
+      let lists = [];
+      if (user?.id) {
+        lists = await fetchSentenceLists(user.id);
+        setUserLists(lists);
+      }
+
       const { data } = await supabase
         .from('sentences')
         .select('domain, jlpt_level')
         .order('domain');
 
       if (data) {
-        // Extract topics
-        const allDomains = [...new Set(data.map(row => row.domain))];
-        const mainTopics = new Set();
-        allDomains.forEach(d => {
-          if (d.includes(':')) {
-            const main = d.split(':')[0].trim();
-            mainTopics.add(main);
+        // Count sentences per domain
+        const domainCounts = {};
+        data.forEach(row => {
+          domainCounts[row.domain] = (domainCounts[row.domain] || 0) + 1;
+        });
+
+        // Extract main topics and count total sentences (including subtopics)
+        const mainTopicCounts = {};
+        Object.entries(domainCounts).forEach(([domain, count]) => {
+          if (domain.includes(':')) {
+            const main = domain.split(':')[0].trim();
+            mainTopicCounts[main] = (mainTopicCounts[main] || 0) + count;
           } else {
-            mainTopics.add(d);
+            mainTopicCounts[domain] = (mainTopicCounts[domain] || 0) + count;
           }
         });
 
+        // Filter topics with at least 10 sentences
         const topics = [
+          ...(lists.length > 0 ? [{ key: 'My Lists', label: 'My Lists', sub: `${lists.length} list${lists.length !== 1 ? 's' : ''}` }] : []),
           { key: 'Any', label: 'Any topic', sub: 'Surprise me' },
-          ...Array.from(mainTopics).sort().map(topic => ({
-            key: topic,
-            label: topic,
-            sub: 'Choose subtopic',
-          })),
+          ...Object.entries(mainTopicCounts)
+            .filter(([_, count]) => count >= 10)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([topic, count]) => ({
+              key: topic,
+              label: topic,
+              sub: `${count} sentence${count !== 1 ? 's' : ''}`,
+            })),
         ];
 
         setTopicOptions(topics);
@@ -104,28 +167,55 @@ export default function RoundSelectScreen({ navigation }) {
       return;
     }
 
+    // Handle My Lists
+    if (domain === 'My Lists') {
+      const listSubtopics = userLists.map(list => ({
+        key: `list:${list.id}`,
+        label: list.name,
+        sub: '', // We could add sentence count here later
+      }));
+
+      setSubtopicOptions(listSubtopics);
+      setSubtopic(listSubtopics[0]?.key || null);
+
+      // Set difficulty options to mixed for lists
+      setDifficultyOptions([
+        { key: 'Mixed', label: 'Mixed', sub: 'Any difficulty level' },
+      ]);
+      setDifficulty('Mixed');
+      return;
+    }
+
     async function loadSubtopics() {
       const { data } = await supabase
         .from('sentences')
-        .select('domain')
+        .select('domain, jlpt_level')
         .or(`domain.like.${domain}:%,domain.eq.${domain}`)
         .order('domain');
 
       if (data) {
-        const uniqueDomains = [...new Set(data.map(row => row.domain))];
+        // Count sentences per domain
+        const domainCounts = {};
+        data.forEach(row => {
+          domainCounts[row.domain] = (domainCounts[row.domain] || 0) + 1;
+        });
 
-        // Filter to only subtopics (contains ":")
-        const subtopics = uniqueDomains
-          .filter(d => d.includes(':') && d.startsWith(domain))
-          .map(d => ({
+        // Filter to only subtopics with at least 10 sentences
+        const subtopics = Object.entries(domainCounts)
+          .filter(([d, count]) => d.includes(':') && d.startsWith(domain) && count >= 10)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([d, count]) => ({
             key: d,
             label: d.split(': ')[1] || d,
-            sub: '',
+            sub: `${count} sentence${count !== 1 ? 's' : ''}`,
           }));
+
+        // Calculate total count for "All" option
+        const totalCount = Object.values(domainCounts).reduce((sum, count) => sum + count, 0);
 
         // Add "All" option at the beginning if subtopics exist
         const subtopicOpts = subtopics.length > 0
-          ? [{ key: domain, label: 'All', sub: 'Any subtopic' }, ...subtopics]
+          ? [{ key: domain, label: 'All', sub: `${totalCount} sentence${totalCount !== 1 ? 's' : ''}` }, ...subtopics]
           : [];
 
         setSubtopicOptions(subtopicOpts);
@@ -136,11 +226,35 @@ export default function RoundSelectScreen({ navigation }) {
         } else {
           setSubtopic(null);
         }
+
+        // Update difficulty options based on selected topic
+        updateDifficultyOptions(data);
       }
     }
 
     loadSubtopics();
   }, [domain]);
+
+  // Update difficulty options when subtopic changes
+  useEffect(() => {
+    if (!subtopic && domain === 'Any') return;
+
+    async function loadDifficultyForSubtopic() {
+      const finalDomain = subtopic || domain;
+
+      const query = finalDomain === 'Any'
+        ? supabase.from('sentences').select('jlpt_level')
+        : supabase.from('sentences').select('jlpt_level').eq('domain', finalDomain);
+
+      const { data } = await query;
+
+      if (data) {
+        updateDifficultyOptions(data);
+      }
+    }
+
+    loadDifficultyForSubtopic();
+  }, [subtopic]);
 
   const showSubtopicPicker = subtopicOptions.length > 0;
 
@@ -152,11 +266,22 @@ export default function RoundSelectScreen({ navigation }) {
   const start = () => {
     const finalDomain = subtopic || domain;
 
-    navigation.navigate('Practice', {
-      rounds: parseInt(rounds),
-      difficulty,
-      domain: finalDomain,
-    });
+    // Check if a list is selected
+    if (finalDomain.startsWith('list:')) {
+      const listId = finalDomain.replace('list:', '');
+      const list = userLists.find(l => l.id === listId);
+      navigation.navigate('Practice', {
+        rounds: parseInt(rounds),
+        listId,
+        listName: list?.name,
+      });
+    } else {
+      navigation.navigate('Practice', {
+        rounds: parseInt(rounds),
+        difficulty,
+        domain: finalDomain,
+      });
+    }
   };
 
   return (
@@ -164,7 +289,7 @@ export default function RoundSelectScreen({ navigation }) {
       <View style={styles.content}>
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.popToTop()}>
+          <TouchableOpacity onPress={() => navigation.navigate('Home')}>
             <Text style={styles.backText}>← Back</Text>
           </TouchableOpacity>
           <Text style={styles.logo}>Kanj<Text style={styles.logoAccent}>ii</Text></Text>
@@ -221,15 +346,15 @@ const styles = StyleSheet.create({
     alignItems: 'center', marginBottom: 32,
   },
   backText: { color: '#555', fontSize: 14 },
-  logo: { fontSize: 22, color: '#EFEFEF', fontWeight: '800', letterSpacing: -0.5 },
+  logo: { fontSize: 22, color: '#EFEFEF', fontWeight: '900', letterSpacing: -0.5 },
   logoAccent: { color: '#E85D3A' },
   title: {
-    color: '#EFEFEF', fontSize: 28, fontWeight: '800',
+    color: '#EFEFEF', fontSize: 28, fontWeight: '900',
     letterSpacing: -0.5, marginBottom: 28,
   },
   dropdowns: { flex: 1, gap: 4 },
   startButton: {
-    backgroundColor: '#E85D3A', borderRadius: 14,
+    backgroundColor: '#E85D3A', borderRadius: 10,
     paddingVertical: 18, alignItems: 'center', marginTop: 24,
   },
   startText: { color: '#fff', fontSize: 17, fontWeight: '700', letterSpacing: 0.3 },

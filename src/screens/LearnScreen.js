@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,9 +8,12 @@ import {
   ScrollView,
   Modal,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import Markdown from 'react-native-markdown-display';
 import KanaPractice from '../components/KanaPractice';
 import KanaTable from '../components/KanaTable';
+import CircularProgress from '../components/CircularProgress';
+import { getBasicKanaStats } from '../services/kanaProgress';
 
 const EXPLANATION_PAGES = [
   {
@@ -197,7 +200,7 @@ Scale from Small to XL
 ✓ Use collections for structured paths`,
   },
   {
-    title: 'Japanese Learning Starts Here',
+    title: 'Your Journey Starts Here',
     content: `🎌 **YOU'RE ABOUT TO DO SOMETHING AMAZING**
 
 Learning Japanese isn't just studying—it's unlocking a whole new world. Every kanji you master, every sentence you type, brings you closer to:
@@ -226,11 +229,15 @@ Head to Home → Practice and type your first sentence.`,
   },
 ];
 
-export default function LearnScreen({ navigation }) {
+export default function LearnScreen({ navigation, user }) {
   const [showExplanation, setShowExplanation] = useState(false);
   const [showKanaTable, setShowKanaTable] = useState(false);
   const [showKanaPractice, setShowKanaPractice] = useState(false);
   const [currentPage, setCurrentPage] = useState(0);
+  const [kanaStats, setKanaStats] = useState({
+    hiragana: { mastered: 0, total: 46, percentage: 0 },
+    katakana: { mastered: 0, total: 46, percentage: 0 },
+  });
 
   const nextPage = () => {
     if (currentPage < EXPLANATION_PAGES.length - 1) {
@@ -244,6 +251,24 @@ export default function LearnScreen({ navigation }) {
   const prevPage = () => {
     if (currentPage > 0) {
       setCurrentPage(currentPage - 1);
+    }
+  };
+
+  // Load kana stats and reset modal state when screen is focused
+  useFocusEffect(
+    useCallback(() => {
+      loadKanaStats();
+      // Reset modal states when returning to this screen
+      setShowKanaPractice(false);
+    }, [])
+  );
+
+  const loadKanaStats = async () => {
+    try {
+      const stats = await getBasicKanaStats(user?.id);
+      setKanaStats(stats);
+    } catch (error) {
+      console.error('Error loading kana stats:', error);
     }
   };
 
@@ -263,6 +288,37 @@ export default function LearnScreen({ navigation }) {
         <Text style={styles.subtitle}>
           New to Japanese? Start here.
         </Text>
+
+        {/* Kana Progress Stats */}
+        <View style={styles.statsContainer}>
+          <View style={styles.statCard}>
+            <CircularProgress
+              percentage={kanaStats.hiragana.percentage}
+              size={52}
+              strokeWidth={4}
+            />
+            <View style={styles.statInfo}>
+              <Text style={styles.statTitle}>Hiragana</Text>
+              <Text style={styles.statDetail}>
+                {kanaStats.hiragana.mastered}/{kanaStats.hiragana.total} mastered
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.statCard}>
+            <CircularProgress
+              percentage={kanaStats.katakana.percentage}
+              size={52}
+              strokeWidth={4}
+            />
+            <View style={styles.statInfo}>
+              <Text style={styles.statTitle}>Katakana</Text>
+              <Text style={styles.statDetail}>
+                {kanaStats.katakana.mastered}/{kanaStats.katakana.total} mastered
+              </Text>
+            </View>
+          </View>
+        </View>
 
         {/* Section 1: How Kanjii Works */}
         <TouchableOpacity
@@ -385,9 +441,15 @@ export default function LearnScreen({ navigation }) {
         visible={showKanaPractice}
         animationType="slide"
         presentationStyle="fullScreen"
-        onRequestClose={() => setShowKanaPractice(false)}
+        onRequestClose={() => {
+          // Let KanaPractice handle the close logic with its exit confirmation
+          // The BackHandler in KanaPractice will show the confirmation modal
+        }}
       >
-        <KanaPractice onClose={() => setShowKanaPractice(false)} />
+        <KanaPractice
+          onClose={() => setShowKanaPractice(false)}
+          navigation={navigation}
+        />
       </Modal>
     </SafeAreaView>
   );
@@ -406,7 +468,7 @@ const styles = StyleSheet.create({
   logo: {
     fontSize: 20,
     color: '#EFEFEF',
-    fontWeight: '800',
+    fontWeight: '900',
     letterSpacing: -0.5,
   },
   logoAccent: {
@@ -415,11 +477,40 @@ const styles = StyleSheet.create({
   subtitle: {
     color: '#888',
     fontSize: 15,
+    marginBottom: 24,
+  },
+  statsContainer: {
+    flexDirection: 'row',
+    gap: 12,
     marginBottom: 32,
+  },
+  statCard: {
+    flex: 1,
+    backgroundColor: '#111',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#222',
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  statInfo: {
+    flex: 1,
+  },
+  statTitle: {
+    color: '#EFEFEF',
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  statDetail: {
+    color: '#666',
+    fontSize: 12,
   },
   card: {
     backgroundColor: '#111',
-    borderRadius: 16,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#222',
     padding: 20,
@@ -489,7 +580,7 @@ const styles = StyleSheet.create({
   pageTitle: {
     color: '#EFEFEF',
     fontSize: 28,
-    fontWeight: '800',
+    fontWeight: '900',
     letterSpacing: -0.5,
     marginBottom: 24,
   },

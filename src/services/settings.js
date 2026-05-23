@@ -1,30 +1,112 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
-const SETTINGS_KEY = '@kanjii_settings';
+import { supabase } from './supabase';
 
 const DEFAULT_SETTINGS = {
   textScale: 1.0,
   voiceGender: 'female', // 'female' or 'male'
   speechRate: 0.85, // 0.5 to 1.5
+  notificationsEnabled: false,
+  dailyReminderHour: 19, // 7 PM
+  dailyReminderMinute: 0,
 };
 
-export async function getSettings() {
+/**
+ * Get user settings from database
+ * Returns default settings if user not found or on error
+ */
+export async function getSettings(userId) {
+  if (!userId) {
+    return DEFAULT_SETTINGS;
+  }
+
   try {
-    const stored = await AsyncStorage.getItem(SETTINGS_KEY);
-    return stored ? { ...DEFAULT_SETTINGS, ...JSON.parse(stored) } : DEFAULT_SETTINGS;
-  } catch {
+    const { data, error } = await supabase
+      .from('user_settings')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    if (!data) {
+      // No settings yet - create with defaults
+      const { data: created } = await supabase
+        .from('user_settings')
+        .insert({
+          user_id: userId,
+          ...DEFAULT_SETTINGS,
+        })
+        .select()
+        .single();
+
+      return created || DEFAULT_SETTINGS;
+    }
+
+    // Map database columns to camelCase
+    return {
+      textScale: data.text_scale,
+      voiceGender: data.voice_gender,
+      speechRate: data.speech_rate,
+      notificationsEnabled: data.notifications_enabled,
+      dailyReminderHour: data.daily_reminder_hour,
+      dailyReminderMinute: data.daily_reminder_minute,
+    };
+  } catch (error) {
+    console.error('Error loading settings:', error);
     return DEFAULT_SETTINGS;
   }
 }
 
-export async function saveSetting(key, value) {
+/**
+ * Save a single setting to database
+ * @param {string} userId - User ID
+ * @param {string} key - Setting key in camelCase (e.g., 'textScale')
+ * @param {any} value - Setting value
+ * @returns {Object} Updated settings object
+ */
+export async function saveSetting(userId, key, value) {
+  if (!userId) {
+    console.warn('No user ID provided to saveSetting');
+    return null;
+  }
+
   try {
-    const current = await getSettings();
-    const updated = { ...current, [key]: value };
-    await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(updated));
-    return updated;
-  } catch (e) {
-    console.error('Failed to save setting:', e);
+    // Map camelCase keys to snake_case database columns
+    const columnMap = {
+      textScale: 'text_scale',
+      voiceGender: 'voice_gender',
+      speechRate: 'speech_rate',
+      notificationsEnabled: 'notifications_enabled',
+      dailyReminderHour: 'daily_reminder_hour',
+      dailyReminderMinute: 'daily_reminder_minute',
+    };
+
+    const dbColumn = columnMap[key];
+    if (!dbColumn) {
+      console.error('Unknown setting key:', key);
+      return null;
+    }
+
+    const { error } = await supabase
+      .from('user_settings')
+      .upsert(
+        {
+          user_id: userId,
+          [dbColumn]: value,
+          updated_at: new Date().toISOString(),
+        },
+        {
+          onConflict: 'user_id',
+          ignoreDuplicates: false,
+        }
+      );
+
+    if (error) throw error;
+
+    // Return updated settings
+    return await getSettings(userId);
+  } catch (error) {
+    console.error('Error saving setting:', error);
+    return null;
   }
 }
 

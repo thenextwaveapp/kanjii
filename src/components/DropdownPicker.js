@@ -75,7 +75,7 @@ const styles = StyleSheet.create({
   },
   trigger: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: '#111', borderRadius: 14, borderWidth: 1, borderColor: '#222',
+    backgroundColor: '#111', borderRadius: 10, borderWidth: 1, borderColor: '#222',
     paddingHorizontal: 24, paddingVertical: 16,
   },
   triggerValue: { color: '#EFEFEF', fontSize: 16, fontWeight: '600' },

@@ -7,118 +7,184 @@ import {
   SafeAreaView,
 } from 'react-native';
 
-export default function ModeSelectScreen({ navigation }) {
+export default function ModeSelectScreen({ navigation, route }) {
+  const { user } = route.params || {};
   return (
     <SafeAreaView style={styles.safe}>
-      <View style={styles.content}>
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()}>
-            <Text style={styles.backText}>← Back</Text>
-          </TouchableOpacity>
-          <Text style={styles.logo}>Kanj<Text style={styles.logoAccent}>ii</Text></Text>
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Text style={styles.backText}>← Back</Text>
+        </TouchableOpacity>
+        <Text style={styles.logo}>Kanj<Text style={styles.logoAccent}>ii</Text></Text>
+      </View>
+
+      <View style={styles.container}>
+        {/* Structured Path */}
+        <TouchableOpacity
+          style={styles.section}
+          activeOpacity={0.7}
+          onPress={() => navigation.navigate('CollectionList')}
+        >
+          <View style={styles.sectionContent}>
+            <View style={styles.labelRow}>
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>STRUCTURED</Text>
+              </View>
+            </View>
+            <Text style={styles.sectionTitle}>
+              Follow{'\n'}the path
+            </Text>
+            <Text style={styles.sectionDescription}>
+              Curated collections designed for progressive mastery
+            </Text>
+          </View>
+          <View style={styles.arrow}>
+            <Text style={styles.arrowText}>→</Text>
+          </View>
+        </TouchableOpacity>
+
+        {/* Divider */}
+        <View style={styles.divider}>
+          <View style={styles.dividerLine} />
+          <Text style={styles.dividerText}>or</Text>
+          <View style={styles.dividerLine} />
         </View>
 
-        <Text style={styles.title}>Practice</Text>
-        <Text style={styles.subtitle}>Choose your learning path</Text>
-
-        {/* Mode cards */}
-        <View style={styles.modes}>
-          <TouchableOpacity
-            style={styles.modeCard}
-            onPress={() => navigation.navigate('CollectionList')}
-            activeOpacity={0.85}
-          >
-            <View style={[styles.iconContainer, styles.iconContainerAccent]}>
-              <Text style={styles.modeIcon}>📚</Text>
+        {/* Free Practice */}
+        <TouchableOpacity
+          style={styles.section}
+          activeOpacity={0.7}
+          onPress={() => navigation.navigate('RoundSelect', { user })}
+        >
+          <View style={styles.sectionContent}>
+            <View style={styles.labelRow}>
+              <View style={[styles.badge, styles.badgeSecondary]}>
+                <Text style={[styles.badgeText, styles.badgeTextSecondary]}>FREESTYLE</Text>
+              </View>
             </View>
-            <Text style={styles.modeTitle}>Structured Lessons</Text>
-            <Text style={styles.modeSub}>
-              Follow curated paths designed for progressive mastery
+            <Text style={styles.sectionTitle}>
+              Choose{'\n'}your topic
             </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.modeCard}
-            onPress={() => navigation.navigate('RoundSelect')}
-            activeOpacity={0.85}
-          >
-            <View style={styles.iconContainer}>
-              <Text style={styles.modeIcon}>🎯</Text>
-            </View>
-            <Text style={styles.modeTitle}>Topic Practice</Text>
-            <Text style={styles.modeSub}>
-              Choose any topic and difficulty level you want
+            <Text style={styles.sectionDescription}>
+              Any subject, any level, any number of rounds
             </Text>
-          </TouchableOpacity>
-        </View>
+          </View>
+          <View style={styles.arrow}>
+            <Text style={styles.arrowText}>→</Text>
+          </View>
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#0A0A0A' },
-  content: { flex: 1, padding: 24 },
+  safe: {
+    flex: 1,
+    backgroundColor: '#0A0A0A',
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    paddingBottom: 20,
   },
-  backText: { color: '#555', fontSize: 14 },
-  logo: { fontSize: 22, color: '#EFEFEF', fontWeight: '800', letterSpacing: -0.5 },
-  logoAccent: { color: '#E85D3A' },
-  title: {
+  backText: {
+    color: '#555',
+    fontSize: 14,
+  },
+  logo: {
+    fontSize: 22,
     color: '#EFEFEF',
-    fontSize: 32,
-    fontWeight: '800',
+    fontWeight: '900',
     letterSpacing: -0.5,
-    marginBottom: 6,
   },
-  subtitle: {
-    color: '#666',
-    fontSize: 15,
-    marginBottom: 32,
-    letterSpacing: 0.2,
+  logoAccent: {
+    color: '#E85D3A',
   },
-  modes: {
-    gap: 20,
+  container: {
     flex: 1,
+    paddingHorizontal: 24,
   },
-  modeCard: {
-    backgroundColor: '#111',
-    borderRadius: 24,
-    borderWidth: 1.5,
-    borderColor: '#222',
-    padding: 24,
-    position: 'relative',
+  section: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 20,
   },
-  iconContainer: {
-    width: 56,
-    height: 56,
-    borderRadius: 16,
-    backgroundColor: '#1A1A1A',
+  sectionContent: {
+    flex: 1,
+    gap: 16,
+  },
+  labelRow: {
+    flexDirection: 'row',
+  },
+  badge: {
+    backgroundColor: '#E85D3A',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 4,
+  },
+  badgeSecondary: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  badgeText: {
+    color: '#FFF',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+  },
+  badgeTextSecondary: {
+    color: '#666',
+  },
+  sectionTitle: {
+    color: '#EFEFEF',
+    fontSize: 36,
+    fontWeight: '900',
+    letterSpacing: -1.5,
+    lineHeight: 40,
+  },
+  sectionDescription: {
+    color: '#666',
+    fontSize: 14,
+    lineHeight: 20,
+    letterSpacing: 0.2,
+    maxWidth: 280,
+  },
+  arrow: {
+    width: 48,
+    height: 48,
     alignItems: 'center',
     justifyContent: 'center',
+    marginLeft: 16,
   },
-  iconContainerAccent: {
-    backgroundColor: '#E85D3A',
+  arrowText: {
+    color: '#E85D3A',
+    fontSize: 32,
+    fontWeight: '300',
   },
-  modeIcon: {
-    fontSize: 28,
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    paddingVertical: 8,
   },
-  modeTitle: {
-    color: '#EFEFEF',
-    fontSize: 24,
-    fontWeight: '800',
-    letterSpacing: -0.5,
-    marginBottom: 8,
-    marginTop: 16,
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#1A1A1A',
   },
-  modeSub: {
-    color: '#888',
-    fontSize: 14,
-    lineHeight: 21,
+  dividerText: {
+    color: '#333',
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
   },
 });
