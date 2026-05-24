@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   SafeAreaView,
   Modal,
+  Animated,
 } from 'react-native';
 import { toRomaji, toHiragana } from 'wanakana';
 import { fetchKanjiDetail } from '../services/progress';
@@ -15,6 +16,7 @@ import StrokeOrder from '../components/StrokeOrder';
 import { speakJapanese, stopSpeaking } from '../services/tts';
 import { useSettings } from '../contexts/SettingsContext';
 import { VOICE_OPTIONS } from '../services/settings';
+import { ttsSmallChipStyles, startPulseAnimation, stopPulseAnimation } from '../styles/ttsStyles';
 
 export default function KanjiDetailScreen({ navigation, route, user }) {
   const { kanji } = route.params;
@@ -25,6 +27,8 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
   const [playingReading, setPlayingReading] = useState(null);
   const [currentSound, setCurrentSound] = useState(null);
   const [showAllReadings, setShowAllReadings] = useState(false);
+  const pulseAnim = useRef(new Animated.Value(0)).current;
+  const pulseAnimationRef = useRef(null);
 
   useEffect(() => {
     if (!user?.id) { setLoading(false); return; }
@@ -64,10 +68,13 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
       await stopSpeaking(currentSound);
       setCurrentSound(null);
       setPlayingReading(null);
+      stopPulseAnimation(pulseAnimationRef.current, pulseAnim);
     }
 
     try {
       setPlayingReading(reading);
+      pulseAnimationRef.current = startPulseAnimation(pulseAnim);
+
       const voiceConfig = VOICE_OPTIONS.find(v => v.value === settings.voiceGender);
       const sound = await speakJapanese(reading, {
         voice: voiceConfig?.voice,
@@ -78,12 +85,14 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
 
       sound.setOnPlaybackStatusUpdate((status) => {
         if (status.didJustFinish) {
+          stopPulseAnimation(pulseAnimationRef.current, pulseAnim);
           setPlayingReading(null);
           setCurrentSound(null);
         }
       });
     } catch (error) {
       console.error('TTS error:', error);
+      stopPulseAnimation(pulseAnimationRef.current, pulseAnim);
       setPlayingReading(null);
       setCurrentSound(null);
     }
@@ -179,26 +188,35 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
               .slice(0, showAllReadings ? undefined : 4)
               .map((reading, i) => {
                 const hiraganaReading = toHiragana(reading);
+                const isPlaying = playingReading === hiraganaReading;
+
+                const ChipView = isPlaying ? Animated.View : View;
+                const animatedStyle = isPlaying ? {
+                  borderColor: pulseAnim.interpolate({
+                    inputRange: [0, 0.5, 1],
+                    outputRange: ['#4A90E2', 'rgba(74, 144, 226, 0.3)', '#4A90E2'],
+                  }),
+                  backgroundColor: 'rgba(74, 144, 226, 0.1)',
+                } : {};
+
                 return (
                   <TouchableOpacity
                     key={`dict-${reading}-${i}`}
-                    style={[
-                      styles.readingChip,
-                      playingReading === hiraganaReading && styles.readingChipPlaying
-                    ]}
                     onLongPress={() => handleReadingLongPress(hiraganaReading)}
                     activeOpacity={0.7}
                     delayLongPress={100}
                   >
-                    <Text style={styles.readingChipKanji}>{kanji}</Text>
-                    <Text style={styles.readingChipText}>{hiraganaReading}</Text>
-                    <Text style={styles.readingChipRomaji}>{toRomaji(hiraganaReading)}</Text>
-                    {kd.dictMeanings && kd.dictMeanings.length > 0 && (
-                      <Text style={styles.readingChipMeaning} numberOfLines={2}>
-                        {kd.dictMeanings.slice(0, 2).join(', ')}
-                      </Text>
-                    )}
-                    <Text style={styles.readingChipHint}>🔊</Text>
+                    <ChipView style={[styles.readingChip, isPlaying && ttsSmallChipStyles.playing, animatedStyle]}>
+                      <Text style={styles.readingChipKanji}>{kanji}</Text>
+                      <Text style={styles.readingChipText}>{hiraganaReading}</Text>
+                      <Text style={styles.readingChipRomaji}>{toRomaji(hiraganaReading)}</Text>
+                      {kd.dictMeanings && kd.dictMeanings.length > 0 && (
+                        <Text style={styles.readingChipMeaning} numberOfLines={2}>
+                          {kd.dictMeanings.slice(0, 2).join(', ')}
+                        </Text>
+                      )}
+                      <Text style={styles.readingChipHint}>🔊</Text>
+                    </ChipView>
                   </TouchableOpacity>
                 );
               })}
@@ -206,26 +224,37 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
             {/* Example words */}
             {kd?.exampleWords && kd.exampleWords.length > 0 && kd.exampleWords
               .slice(0, showAllReadings ? undefined : Math.max(0, 4 - (kd?.dictReadings?.length || 0)))
-              .map((w, i) => (
-                <TouchableOpacity
-                  key={`example-${w.word}-${i}`}
-                  style={[
-                    styles.readingChip,
-                    playingReading === w.furigana && styles.readingChipPlaying
-                  ]}
-                  onLongPress={() => handleReadingLongPress(w.furigana)}
-                  activeOpacity={0.7}
-                  delayLongPress={100}
-                >
-                  <Text style={styles.readingChipKanji}>{w.word}</Text>
-                  <Text style={styles.readingChipText}>{w.furigana}</Text>
-                  <Text style={styles.readingChipRomaji}>{toRomaji(w.furigana)}</Text>
-                  {w.meaning && (
-                    <Text style={styles.readingChipMeaning}>{w.meaning}</Text>
-                  )}
-                  <Text style={styles.readingChipHint}>🔊</Text>
-                </TouchableOpacity>
-              ))}
+              .map((w, i) => {
+                const isPlaying = playingReading === w.furigana;
+
+                const ChipView = isPlaying ? Animated.View : View;
+                const animatedStyle = isPlaying ? {
+                  borderColor: pulseAnim.interpolate({
+                    inputRange: [0, 0.5, 1],
+                    outputRange: ['#4A90E2', 'rgba(74, 144, 226, 0.3)', '#4A90E2'],
+                  }),
+                  backgroundColor: 'rgba(74, 144, 226, 0.1)',
+                } : {};
+
+                return (
+                  <TouchableOpacity
+                    key={`example-${w.word}-${i}`}
+                    onLongPress={() => handleReadingLongPress(w.furigana)}
+                    activeOpacity={0.7}
+                    delayLongPress={100}
+                  >
+                    <ChipView style={[styles.readingChip, isPlaying && ttsSmallChipStyles.playing, animatedStyle]}>
+                      <Text style={styles.readingChipKanji}>{w.word}</Text>
+                      <Text style={styles.readingChipText}>{w.furigana}</Text>
+                      <Text style={styles.readingChipRomaji}>{toRomaji(w.furigana)}</Text>
+                      {w.meaning && (
+                        <Text style={styles.readingChipMeaning}>{w.meaning}</Text>
+                      )}
+                      <Text style={styles.readingChipHint}>🔊</Text>
+                    </ChipView>
+                  </TouchableOpacity>
+                );
+              })}
 
             {/* Expand button */}
             {((kd?.dictReadings?.length || 0) + (kd?.exampleWords?.length || 0) > 4) && (
@@ -520,10 +549,6 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     gap: 2,
     position: 'relative',
-  },
-  readingChipPlaying: {
-    backgroundColor: '#222',
-    borderColor: '#E85D3A',
   },
   readingChipKanji: {
     color: '#EFEFEF',

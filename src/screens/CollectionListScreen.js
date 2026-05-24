@@ -29,6 +29,8 @@ export default function CollectionListScreen({ navigation, user }) {
   const [lessons, setLessons] = useState({});
   const flatListRef = useRef(null);
   const scrollX = useRef(new Animated.Value(0)).current;
+  const cardScrollRefs = useRef({}).current;
+  const lessonsAnimations = useRef({}).current;
 
   useFocusEffect(
     useCallback(() => {
@@ -67,6 +69,14 @@ export default function CollectionListScreen({ navigation, user }) {
 
     setExpandedId(collectionId);
 
+    // Scroll to show lessons after a brief delay for layout
+    setTimeout(() => {
+      const scrollRef = cardScrollRefs[collectionId];
+      if (scrollRef) {
+        scrollRef.scrollTo({ y: 200, animated: true });
+      }
+    }, 100);
+
     if (!lessons[collectionId] && user?.id) {
       try {
         const lessonData = await fetchLessons(collectionId, user.id);
@@ -90,11 +100,34 @@ export default function CollectionListScreen({ navigation, user }) {
     itemVisiblePercentThreshold: 50,
   }).current;
 
+  // Trigger animation when expandedId changes
+  React.useEffect(() => {
+    collections.forEach((collection) => {
+      if (!lessonsAnimations[collection.id]) {
+        lessonsAnimations[collection.id] = new Animated.Value(0);
+      }
+
+      const isExpanded = expandedId === collection.id;
+      Animated.spring(lessonsAnimations[collection.id], {
+        toValue: isExpanded ? 1 : 0,
+        useNativeDriver: true,
+        tension: 50,
+        friction: 7,
+      }).start();
+    });
+  }, [expandedId, collections]);
+
   const renderCollectionCard = ({ item: collection, index }) => {
     const prog = progress[collection.id] || { percentage: 0, completedLessons: 0, totalLessons: 0 };
     const isStarted = prog.completedLessons > 0;
     const isExpanded = expandedId === collection.id;
     const collectionLessons = lessons[collection.id] || [];
+
+    // Initialize animation value for this collection if it doesn't exist
+    if (!lessonsAnimations[collection.id]) {
+      lessonsAnimations[collection.id] = new Animated.Value(0);
+    }
+    const lessonsAnimation = lessonsAnimations[collection.id];
 
     const inputRange = [
       (index - 1) * (CARD_WIDTH + CARD_SPACING),
@@ -125,13 +158,17 @@ export default function CollectionListScreen({ navigation, user }) {
         ]}
       >
         <ScrollView
+          ref={(ref) => (cardScrollRefs[collection.id] = ref)}
           style={styles.cardScrollView}
           showsVerticalScrollIndicator={true}
           scrollEnabled={isExpanded}
           nestedScrollEnabled={true}
         >
         <TouchableOpacity
-          style={styles.cardTouchable}
+          style={[
+            styles.cardTouchable,
+            isExpanded && styles.cardTouchableExpanded,
+          ]}
           activeOpacity={0.9}
           onPress={() => handleCollectionPress(collection.id)}
         >
@@ -172,7 +209,9 @@ export default function CollectionListScreen({ navigation, user }) {
 
               {/* Expand/collapse indicator */}
               <View style={styles.expandIndicator}>
-                <Text style={styles.expandText}>{isExpanded ? 'Hide lessons ▲' : 'Show lessons ▼'}</Text>
+                <Text style={[styles.expandText, isExpanded && styles.expandTextActive]}>
+                  {isExpanded ? 'Hide lessons ▲' : 'Show lessons ▼'}
+                </Text>
               </View>
             </View>
           </View>
@@ -180,17 +219,39 @@ export default function CollectionListScreen({ navigation, user }) {
 
         {/* Expanded lessons */}
         {isExpanded && collectionLessons.length > 0 ? (
-          <View style={styles.lessonsContainer}>
-            <Text style={{ color: '#E85D3A', marginBottom: 12, fontWeight: '700' }}>
+          <Animated.View
+            style={[
+              styles.lessonsContainer,
+              {
+                opacity: lessonsAnimation,
+                transform: [{
+                  translateY: lessonsAnimation.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [20, 0],
+                  }),
+                }],
+              },
+            ]}
+          >
+            <Text style={{ color: '#FFF8E7', marginBottom: 12, fontWeight: '700', fontSize: 16 }}>
               Lessons ({collectionLessons.length})
             </Text>
             <View style={styles.lessonsDivider} />
             <View style={styles.lessonsWrapper}>
             {collectionLessons.map((lesson, lessonIndex) => {
-              const isFirstLesson = lesson.order_index === 1;
+              const isFirstLesson = lessonIndex === 0;
               const previousLesson = lessonIndex > 0 ? collectionLessons[lessonIndex - 1] : null;
               const isUnlocked = isFirstLesson || (previousLesson && previousLesson.isComplete);
               const isLessonStarted = lesson.masteredCount > 0 || lesson.goodCount > 0;
+
+              console.log(`Lesson ${lessonIndex}: ${lesson.name}`, {
+                isFirstLesson,
+                isUnlocked,
+                isComplete: lesson.isComplete,
+                previousComplete: previousLesson?.isComplete,
+                masteredCount: lesson.masteredCount,
+                sentenceCount: lesson.sentenceCount,
+              });
 
               return (
                 <TouchableOpacity
@@ -208,6 +269,7 @@ export default function CollectionListScreen({ navigation, user }) {
                         lessonId: lesson.id,
                         lessonName: lesson.name,
                         collectionName: collection.name,
+                        collectionId: collection.id,
                       });
                     }
                   }}
@@ -253,13 +315,26 @@ export default function CollectionListScreen({ navigation, user }) {
               );
             })}
             </View>
-          </View>
+          </Animated.View>
         ) : isExpanded ? (
-          <View style={styles.lessonsContainer}>
+          <Animated.View
+            style={[
+              styles.lessonsContainer,
+              {
+                opacity: lessonsAnimation,
+                transform: [{
+                  translateY: lessonsAnimation.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [20, 0],
+                  }),
+                }],
+              },
+            ]}
+          >
             <Text style={{ color: '#888', textAlign: 'center', padding: 20 }}>
               Loading lessons...
             </Text>
-          </View>
+          </Animated.View>
         ) : null}
         </ScrollView>
       </Animated.View>
@@ -279,7 +354,7 @@ export default function CollectionListScreen({ navigation, user }) {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.navigate('Home')}>
+        <TouchableOpacity onPress={() => navigation.popToTop()}>
           <Text style={styles.backText}>← Back</Text>
         </TouchableOpacity>
         <Text style={styles.logo}>Kanj<Text style={styles.logoAccent}>ii</Text></Text>
@@ -316,16 +391,10 @@ export default function CollectionListScreen({ navigation, user }) {
         />
       </View>
 
-      <View style={styles.dotContainer}>
-        {collections.map((_, index) => (
-          <View
-            key={index}
-            style={[
-              styles.dot,
-              index === currentIndex && styles.dotActive,
-            ]}
-          />
-        ))}
+      <View style={styles.pageCounter}>
+        <Text style={styles.pageCounterText}>
+          {currentIndex + 1} / {collections.length}
+        </Text>
       </View>
     </SafeAreaView>
   );
@@ -397,6 +466,15 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#0A0F1E',
     overflow: 'hidden',
+  },
+  cardTouchableExpanded: {
+    borderColor: '#FFF8E7',
+    borderWidth: 2,
+    shadowColor: '#FFF8E7',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 8,
+    elevation: 8,
   },
   cardContent: {
     // Dynamic height based on expanded state - handled in component
@@ -480,6 +558,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     letterSpacing: 0.5,
+  },
+  expandTextActive: {
+    color: '#FFF8E7',
   },
   lessonsDivider: {
     height: 1,
@@ -565,21 +646,17 @@ const styles = StyleSheet.create({
     color: '#E85D3A',
     fontSize: 16,
   },
-  dotContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
+  pageCounter: {
+    position: 'absolute',
+    bottom: 8,
+    left: 0,
+    right: 0,
     alignItems: 'center',
-    paddingBottom: 32,
-    gap: 8,
   },
-  dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#333',
-  },
-  dotActive: {
-    backgroundColor: '#E85D3A',
-    width: 20,
+  pageCounterText: {
+    color: '#666',
+    fontSize: 13,
+    fontWeight: '600',
+    letterSpacing: 0.5,
   },
 });

@@ -9,6 +9,7 @@ import {
   SafeAreaView,
   TextInput,
   Modal,
+  Animated,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { useFocusEffect } from '@react-navigation/native';
@@ -24,6 +25,7 @@ import {
 import { speakJapanese } from '../services/tts';
 import { useSettings } from '../contexts/SettingsContext';
 import { VOICE_OPTIONS } from '../services/settings';
+import { ttsLargeCardStyles, ttsSmallChipStyles, startPulseAnimation, stopPulseAnimation } from '../styles/ttsStyles';
 
 const KANJI_TABS = ['All', 'Needs work', 'Mastered'];
 const KANJI_RE = /[\u4E00-\u9FFF\u3400-\u4DBF]/g;
@@ -53,6 +55,8 @@ export default function StudyScreen({ navigation, route, user }) {
   const [highlightedSentenceId, setHighlightedSentenceId] = useState(highlightSentenceId);
   const [playingSentenceId, setPlayingSentenceId] = useState(null);
   const [playingWordKey, setPlayingWordKey] = useState(null);
+  const wordPulseAnim = useRef(new Animated.Value(0)).current;
+  const wordPulseAnimationRef = useRef(null);
 
   // Sentence lists state
   const [sentenceLists, setSentenceLists] = useState([]);
@@ -400,6 +404,7 @@ export default function StudyScreen({ navigation, route, user }) {
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setPlayingWordKey(wordKey);
+    wordPulseAnimationRef.current = startPulseAnimation(wordPulseAnim);
 
     try {
       const textToSpeak = word.furigana || word.word;
@@ -411,6 +416,7 @@ export default function StudyScreen({ navigation, route, user }) {
     } catch (error) {
       console.error('Word TTS error:', error);
     } finally {
+      stopPulseAnimation(wordPulseAnimationRef.current, wordPulseAnim);
       setPlayingWordKey(null);
     }
   };
@@ -516,6 +522,7 @@ export default function StudyScreen({ navigation, route, user }) {
           playingSentenceId={playingSentenceId}
           onWordSpeak={handleWordSpeak}
           playingWordKey={playingWordKey}
+          wordPulseAnim={wordPulseAnim}
           onOpenListModal={() => setShowListModal(true)}
           onToggleSentenceInList={toggleSentenceInList}
           navigation={navigation}
@@ -670,7 +677,7 @@ function KanjiView({ kanjiList, filtered, activeTab, setActiveTab, weakKanji, on
   );
 }
 
-function SentencesView({ sentences, searchQuery, lists, activeFilters, onToggleFilter, onViewDetail, onSentenceSpeak, playingSentenceId, onWordSpeak, playingWordKey, onOpenListModal, onToggleSentenceInList, navigation, highlightedSentenceId, onClearHighlight }) {
+function SentencesView({ sentences, searchQuery, lists, activeFilters, onToggleFilter, onViewDetail, onSentenceSpeak, playingSentenceId, onWordSpeak, playingWordKey, wordPulseAnim, onOpenListModal, onToggleSentenceInList, navigation, highlightedSentenceId, onClearHighlight }) {
   const listRef = useRef(null);
 
   // Scroll to highlighted sentence
@@ -777,7 +784,7 @@ function SentencesView({ sentences, searchQuery, lists, activeFilters, onToggleF
             style={[
               styles.sentenceCard,
               isHighlighted && styles.sentenceCardHighlighted,
-              isPlaying && styles.sentenceCardPlaying
+              isPlaying && ttsLargeCardStyles.playing
             ]}
             onPress={() => {
               if (isHighlighted) onClearHighlight?.();
@@ -792,13 +799,19 @@ function SentencesView({ sentences, searchQuery, lists, activeFilters, onToggleF
                 {s.words.slice(0, 4).map((w, idx) => {
                   const wordKey = `${s.id}-${idx}`;
                   const isWordPlaying = playingWordKey === wordKey;
+
+                  const ChipView = isWordPlaying ? Animated.View : View;
+                  const animatedStyle = isWordPlaying ? {
+                    borderColor: wordPulseAnim.interpolate({
+                      inputRange: [0, 0.5, 1],
+                      outputRange: ['#4A90E2', 'rgba(74, 144, 226, 0.3)', '#4A90E2'],
+                    }),
+                    backgroundColor: 'rgba(74, 144, 226, 0.1)',
+                  } : {};
+
                   return (
                     <TouchableOpacity
                       key={`${w.word}-${idx}`}
-                      style={[
-                        styles.kanjiChipSmall,
-                        isWordPlaying && styles.kanjiChipPlaying
-                      ]}
                       onPress={(e) => {
                         e.stopPropagation?.();
                         const firstKanji = w.word?.match(/[\u4E00-\u9FFF\u3400-\u4DBF]/)?.[0];
@@ -811,13 +824,19 @@ function SentencesView({ sentences, searchQuery, lists, activeFilters, onToggleF
                         onWordSpeak?.(w, wordKey);
                       }}
                     >
-                      <Text style={styles.kanjiChipWord}>{w.word}</Text>
-                      {w.furigana && (
-                        <Text style={styles.kanjiChipFurigana}>{w.furigana}</Text>
-                      )}
-                      {w.meaning && (
-                        <Text style={styles.kanjiChipMeaning}>{w.meaning}</Text>
-                      )}
+                      <ChipView style={[
+                        styles.kanjiChipSmall,
+                        isWordPlaying && ttsSmallChipStyles.playing,
+                        animatedStyle
+                      ]}>
+                        <Text style={styles.kanjiChipWord}>{w.word}</Text>
+                        {w.furigana && (
+                          <Text style={styles.kanjiChipFurigana}>{w.furigana}</Text>
+                        )}
+                        {w.meaning && (
+                          <Text style={styles.kanjiChipMeaning}>{w.meaning}</Text>
+                        )}
+                      </ChipView>
                     </TouchableOpacity>
                   );
                 })}
@@ -1144,10 +1163,6 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     backgroundColor: 'rgba(232, 93, 58, 0.05)',
   },
-  sentenceCardPlaying: {
-    borderColor: '#4A90E2',
-    backgroundColor: 'rgba(74, 144, 226, 0.05)',
-  },
   kanjiChipsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1162,10 +1177,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     gap: 2,
-  },
-  kanjiChipPlaying: {
-    borderColor: '#4A90E2',
-    backgroundColor: '#1A2A3A',
   },
   kanjiChipWord: {
     color: '#EFEFEF',

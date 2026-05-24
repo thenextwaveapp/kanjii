@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   SafeAreaView,
   ScrollView,
   ActivityIndicator,
+  Animated,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { toRomaji } from 'wanakana';
@@ -14,6 +15,7 @@ import { speakJapanese, stopSpeaking } from '../services/tts';
 import { supabase } from '../services/supabase';
 import { useSettings } from '../contexts/SettingsContext';
 import { VOICE_OPTIONS } from '../services/settings';
+import { ttsLargeCardStyles, ttsSmallChipStyles, startPulseAnimation, stopPulseAnimation } from '../styles/ttsStyles';
 
 function toHepburn(kana) {
   let r = toRomaji(kana)
@@ -89,6 +91,8 @@ export default function SentenceDetailScreen({ navigation, route, user }) {
   const [loading, setLoading] = useState(true);
   const [playing, setPlaying] = useState(false);
   const [playingWord, setPlayingWord] = useState(null);
+  const pulseAnim = useRef(new Animated.Value(0)).current;
+  const pulseAnimationRef = useRef(null);
 
   useEffect(() => {
     loadStats();
@@ -153,6 +157,9 @@ export default function SentenceDetailScreen({ navigation, route, user }) {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setPlayingWord(word.word);
 
+    // Start pulse animation
+    pulseAnimationRef.current = startPulseAnimation(pulseAnim);
+
     try {
       // Use furigana for pronunciation if available, otherwise use the word itself
       const textToSpeak = word.furigana || word.word;
@@ -164,6 +171,7 @@ export default function SentenceDetailScreen({ navigation, route, user }) {
     } catch (error) {
       console.error('Word TTS error:', error);
     } finally {
+      stopPulseAnimation(pulseAnimationRef.current, pulseAnim);
       setPlayingWord(null);
     }
   };
@@ -202,7 +210,7 @@ export default function SentenceDetailScreen({ navigation, route, user }) {
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
         {/* Main sentence card */}
-        <View style={styles.heroBox}>
+        <View style={[styles.heroBox, playing && ttsLargeCardStyles.playing]}>
           <View style={styles.sentenceRow}>
             <Text style={styles.sentenceJapanese}>{sentence.japanese}</Text>
             <TouchableOpacity
@@ -210,11 +218,12 @@ export default function SentenceDetailScreen({ navigation, route, user }) {
               onPress={handleSpeak}
               disabled={playing}
             >
-              <Text style={[styles.speakerIcon, playing && styles.speakerPlaying]}>
-                🔊
-              </Text>
+              <Text style={styles.speakerIcon}>🔊</Text>
             </TouchableOpacity>
           </View>
+          {playing && (
+            <Text style={ttsLargeCardStyles.playingText}>🔊 Playing</Text>
+          )}
           <Text style={styles.sentenceRomaji}>{romaji}</Text>
           <Text style={styles.sentenceEnglish}>{sentence.english}</Text>
 
@@ -277,21 +286,34 @@ export default function SentenceDetailScreen({ navigation, route, user }) {
               {sentence.words.map((word, index) => {
                 const firstKanji = word.word?.match(/[\u4E00-\u9FFF\u3400-\u4DBF]/)?.[0];
                 const isPlaying = playingWord === word.word;
+
+                // Use Animated.View for playing state
+                const WordCard = isPlaying ? Animated.View : View;
+                const animatedStyle = isPlaying ? {
+                  borderColor: pulseAnim.interpolate({
+                    inputRange: [0, 0.5, 1],
+                    outputRange: ['#4A90E2', 'rgba(74, 144, 226, 0.3)', '#4A90E2'],
+                  }),
+                  backgroundColor: 'rgba(74, 144, 226, 0.1)',
+                } : {};
+
                 return (
                   <TouchableOpacity
                     key={`${word.word}-${index}`}
-                    style={[styles.wordCard, isPlaying && styles.wordCardPlaying]}
                     onPress={() => firstKanji && handleKanjiTap(firstKanji)}
                     onLongPress={() => handleWordSpeak(word)}
                     disabled={!firstKanji && !word.word}
+                    activeOpacity={0.7}
                   >
-                    <Text style={styles.wordText}>{word.word}</Text>
-                    {word.furigana && (
-                      <Text style={styles.wordFurigana}>{word.furigana}</Text>
-                    )}
-                    {word.meaning && (
-                      <Text style={styles.wordMeaning}>{word.meaning}</Text>
-                    )}
+                    <WordCard style={[styles.wordCard, isPlaying && ttsSmallChipStyles.playing, animatedStyle]}>
+                      <Text style={styles.wordText}>{word.word}</Text>
+                      {word.furigana && (
+                        <Text style={styles.wordFurigana}>{word.furigana}</Text>
+                      )}
+                      {word.meaning && (
+                        <Text style={styles.wordMeaning}>{word.meaning}</Text>
+                      )}
+                    </WordCard>
                   </TouchableOpacity>
                 );
               })}
@@ -374,9 +396,6 @@ const styles = StyleSheet.create({
   },
   speakerIcon: {
     fontSize: 24,
-  },
-  speakerPlaying: {
-    opacity: 0.5,
   },
   sentenceRomaji: {
     color: '#666',
@@ -505,10 +524,6 @@ const styles = StyleSheet.create({
     padding: 14,
     minWidth: 100,
     gap: 4,
-  },
-  wordCardPlaying: {
-    borderColor: '#E85D3A',
-    backgroundColor: '#1A1A1A',
   },
   wordText: {
     color: '#EFEFEF',

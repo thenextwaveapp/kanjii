@@ -19,59 +19,66 @@ export default function ModeSelectScreen({ navigation, route }) {
         <Text style={styles.logo}>Kanj<Text style={styles.logoAccent}>ii</Text></Text>
       </View>
 
+      <View style={styles.titleSection}>
+        <Text style={styles.pageTitle}>Choose your{'\n'}practice mode</Text>
+        <Text style={styles.pageSubtitle}>Two paths to mastery</Text>
+      </View>
+
       <View style={styles.container}>
-        {/* Structured Path */}
+        {/* Structured Lessons Card */}
         <TouchableOpacity
-          style={styles.section}
-          activeOpacity={0.7}
+          style={[styles.card, styles.cardPrimary]}
+          activeOpacity={0.85}
           onPress={() => navigation.navigate('CollectionList')}
         >
-          <View style={styles.sectionContent}>
-            <View style={styles.labelRow}>
-              <View style={styles.badge}>
-                <Text style={styles.badgeText}>STRUCTURED</Text>
-              </View>
-            </View>
-            <Text style={styles.sectionTitle}>
-              Follow{'\n'}the path
-            </Text>
-            <Text style={styles.sectionDescription}>
-              Curated collections designed for progressive mastery
-            </Text>
+          <View style={styles.cardBadge}>
+            <Text style={styles.cardBadgeText}>RECOMMENDED</Text>
           </View>
-          <View style={styles.arrow}>
-            <Text style={styles.arrowText}>→</Text>
+
+          {/* Visual hint: connected path */}
+          <View style={styles.pathVisual}>
+            <View style={[styles.pathDot, styles.pathDotActive]} />
+            <View style={styles.pathLine} />
+            <View style={[styles.pathDot, styles.pathDotActive]} />
+            <View style={styles.pathLine} />
+            <View style={styles.pathDot} />
+          </View>
+
+          <Text style={styles.cardTitle}>Structured Lessons</Text>
+          <Text style={styles.cardDescription}>
+            Follow curated collections from N5 to N1. Progressive curriculum designed for steady mastery.
+          </Text>
+
+          <View style={styles.cardFooter}>
+            <Text style={styles.cardHint}>📚 Guided learning path</Text>
+            <Text style={styles.cardArrow}>→</Text>
           </View>
         </TouchableOpacity>
 
-        {/* Divider */}
-        <View style={styles.divider}>
-          <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>or</Text>
-          <View style={styles.dividerLine} />
-        </View>
-
-        {/* Free Practice */}
+        {/* Freestyle Practice Card */}
         <TouchableOpacity
-          style={styles.section}
-          activeOpacity={0.7}
+          style={styles.card}
+          activeOpacity={0.85}
           onPress={() => navigation.navigate('RoundSelect', { user })}
         >
-          <View style={styles.sectionContent}>
-            <View style={styles.labelRow}>
-              <View style={[styles.badge, styles.badgeSecondary]}>
-                <Text style={[styles.badgeText, styles.badgeTextSecondary]}>FREESTYLE</Text>
-              </View>
-            </View>
-            <Text style={styles.sectionTitle}>
-              Choose{'\n'}your topic
-            </Text>
-            <Text style={styles.sectionDescription}>
-              Any subject, any level, any number of rounds
-            </Text>
+          {/* Visual hint: flexible grid */}
+          <View style={styles.gridVisual}>
+            <View style={styles.gridDot} />
+            <View style={styles.gridDot} />
+            <View style={styles.gridDot} />
+            <View style={styles.gridDot} />
+            <View style={styles.gridDot} />
+            <View style={styles.gridDot} />
           </View>
-          <View style={styles.arrow}>
-            <Text style={styles.arrowText}>→</Text>
+
+          <Text style={styles.cardTitle}>Freestyle Practice</Text>
+          <Text style={styles.cardDescription}>
+            Pick any topic, level, and round count. Perfect for drilling weak kanji or exploring new domains.
+          </Text>
+
+          <View style={styles.cardFooter}>
+            <Text style={styles.cardHint}>🎯 Custom sessions</Text>
+            <Text style={styles.cardArrow}>→</Text>
           </View>
         </TouchableOpacity>
       </View>
@@ -90,7 +97,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 24,
     paddingTop: 16,
-    paddingBottom: 20,
+    paddingBottom: 12,
   },
   backText: {
     color: '#555',
@@ -105,86 +112,124 @@ const styles = StyleSheet.create({
   logoAccent: {
     color: '#E85D3A',
   },
+  titleSection: {
+    paddingHorizontal: 24,
+    paddingTop: 8,
+    paddingBottom: 24,
+  },
+  pageTitle: {
+    fontSize: 32,
+    color: '#EFEFEF',
+    fontWeight: '900',
+    letterSpacing: -1,
+    lineHeight: 38,
+    marginBottom: 8,
+  },
+  pageSubtitle: {
+    fontSize: 14,
+    color: '#666',
+    letterSpacing: 0.3,
+  },
   container: {
     flex: 1,
     paddingHorizontal: 24,
-  },
-  section: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 20,
-  },
-  sectionContent: {
-    flex: 1,
     gap: 16,
+    paddingBottom: 24,
   },
-  labelRow: {
-    flexDirection: 'row',
+  card: {
+    backgroundColor: '#111',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#222',
+    padding: 24,
+    gap: 16,
+    position: 'relative',
   },
-  badge: {
+  cardPrimary: {
+    borderColor: '#E85D3A',
+    borderWidth: 2,
+  },
+  cardBadge: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
     backgroundColor: '#E85D3A',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
     borderRadius: 4,
   },
-  badgeSecondary: {
-    backgroundColor: 'transparent',
+  cardBadgeText: {
+    color: '#FFF',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  // Path visual for structured lessons
+  pathVisual: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 8,
+  },
+  pathDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#222',
     borderWidth: 1,
     borderColor: '#333',
   },
-  badgeText: {
-    color: '#FFF',
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 1.5,
+  pathDotActive: {
+    backgroundColor: '#E85D3A',
+    borderColor: '#E85D3A',
   },
-  badgeTextSecondary: {
-    color: '#666',
+  pathLine: {
+    width: 20,
+    height: 2,
+    backgroundColor: '#333',
   },
-  sectionTitle: {
-    color: '#EFEFEF',
-    fontSize: 36,
-    fontWeight: '900',
-    letterSpacing: -1.5,
-    lineHeight: 40,
-  },
-  sectionDescription: {
-    color: '#666',
-    fontSize: 14,
-    lineHeight: 20,
-    letterSpacing: 0.2,
-    maxWidth: 280,
-  },
-  arrow: {
-    width: 48,
-    height: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 16,
-  },
-  arrowText: {
-    color: '#E85D3A',
-    fontSize: 32,
-    fontWeight: '300',
-  },
-  divider: {
+  // Grid visual for freestyle
+  gridVisual: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    width: 60,
+    marginTop: 8,
+  },
+  gridDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 2,
+    backgroundColor: '#222',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  cardTitle: {
+    fontSize: 24,
+    color: '#EFEFEF',
+    fontWeight: '700',
+    letterSpacing: -0.5,
+  },
+  cardDescription: {
+    fontSize: 14,
+    color: '#888',
+    lineHeight: 22,
+    letterSpacing: 0.2,
+  },
+  cardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 16,
-    paddingVertical: 8,
+    marginTop: 8,
   },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: '#1A1A1A',
-  },
-  dividerText: {
-    color: '#333',
-    fontSize: 11,
+  cardHint: {
+    fontSize: 12,
+    color: '#555',
     fontWeight: '600',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
+  },
+  cardArrow: {
+    fontSize: 24,
+    color: '#E85D3A',
+    fontWeight: '300',
   },
 });

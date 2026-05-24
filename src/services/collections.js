@@ -1,9 +1,11 @@
 import { supabase } from './supabase';
+import { fetchWithCache, invalidatePattern } from './cache';
 
 /**
  * Fetch all collections with lesson counts
  */
 export async function fetchCollections() {
+  return fetchWithCache('collections', async () => {
   const { data: collections, error } = await supabase
     .from('collections')
     .select(`
@@ -18,28 +20,54 @@ export async function fetchCollections() {
 
   if (error) throw error;
 
-  // Get lesson counts for each collection
+  // Get lesson counts for each collection (only lessons with sentences)
   const collectionsWithCounts = await Promise.all(
     (collections || []).map(async (collection) => {
-      const { count: lessonCount } = await supabase
+      // Get all lessons for this collection
+      const { data: lessons } = await supabase
         .from('lessons')
-        .select('*', { count: 'exact', head: true })
+        .select('id')
         .eq('collection_id', collection.id);
+
+      if (!lessons || lessons.length === 0) {
+        return {
+          ...collection,
+          lessonCount: 0,
+        };
+      }
+
+      // Count how many of these lessons have sentences
+      const lessonIds = lessons.map(l => l.id);
+      const lessonsWithSentences = await Promise.all(
+        lessonIds.map(async (lessonId) => {
+          const { count } = await supabase
+            .from('lesson_sentences')
+            .select('*', { count: 'exact', head: true })
+            .eq('lesson_id', lessonId);
+          return count > 0;
+        })
+      );
+
+      const populatedLessonCount = lessonsWithSentences.filter(Boolean).length;
 
       return {
         ...collection,
-        lessonCount: lessonCount || 0,
+        lessonCount: populatedLessonCount,
       };
     })
   );
 
-  return collectionsWithCounts;
+  // Filter out collections with no populated lessons
+    return collectionsWithCounts.filter(c => c.lessonCount > 0);
+  }, 10 * 60 * 1000); // Cache for 10 minutes
 }
 
 /**
  * Fetch lessons for a collection with progress
  */
 export async function fetchLessons(collectionId, userId) {
+  const cacheKey = `lessons:${collectionId}:${userId}`;
+  return fetchWithCache(cacheKey, async () => {
   const { data: lessons, error } = await supabase
     .from('lessons')
     .select(`
@@ -82,13 +110,16 @@ export async function fetchLessons(collectionId, userId) {
     })
   );
 
-  return lessonsWithProgress;
+    return lessonsWithProgress;
+  }, 5 * 60 * 1000); // Cache for 5 minutes
 }
 
 /**
  * Fetch sentences for a lesson in order
  */
 export async function fetchLessonSentences(lessonId) {
+  const cacheKey = `sentences:${lessonId}`;
+  return fetchWithCache(cacheKey, async () => {
   const { data, error } = await supabase
     .from('lesson_sentences')
     .select(`
@@ -106,9 +137,10 @@ export async function fetchLessonSentences(lessonId) {
     .eq('lesson_id', lessonId)
     .order('order_index');
 
-  if (error) throw error;
+    if (error) throw error;
 
-  return (data || []).map(item => item.sentences);
+    return (data || []).map(item => item.sentences);
+  }, 10 * 60 * 1000); // Cache for 10 minutes (sentences don't change often)
 }
 
 /**
@@ -170,10 +202,9 @@ export async function updateLessonProgress({ userId, lessonId, sentenceResults }
   // Count mastered and good across ALL sentences practiced in this lesson
   const masteredCount = (allSentenceProgress || []).filter(p => p.grade === '○').length;
   const goodCount = (allSentenceProgress || []).filter(p => p.grade === '△').length;
-  const completedWithPassingGrade = masteredCount + goodCount;
 
-  // Lesson is complete only when ALL sentences in the lesson have been completed with ○ or △
-  const isComplete = completedWithPassingGrade === totalSentencesInLesson;
+  // Lesson is complete only when ALL sentences in the lesson have been mastered with ○
+  const isComplete = masteredCount === totalSentencesInLesson;
 
   const { error } = await supabase
     .from('user_lesson_progress')
@@ -191,6 +222,10 @@ export async function updateLessonProgress({ userId, lessonId, sentenceResults }
 
   if (error) throw error;
 
+  // Invalidate caches since progress changed
+  invalidatePattern('lessons:'); // Invalidate all lessons caches
+  invalidatePattern('progress:collection');
+
   return {
     masteredCount,
     goodCount,
@@ -207,6 +242,8 @@ export async function updateLessonProgress({ userId, lessonId, sentenceResults }
  * - × or not attempted = 0% = 0.0 weight
  */
 export async function getCollectionProgress(collectionId, userId) {
+  const cacheKey = `progress:collection:${collectionId}:${userId}`;
+  return fetchWithCache(cacheKey, async () => {
   // Get all lessons for this collection
   const { data: lessons } = await supabase
     .from('lessons')
@@ -255,11 +292,12 @@ export async function getCollectionProgress(collectionId, userId) {
     }
   });
 
-  const percentage = Math.round((totalScore / totalSentences) * 100);
+    const percentage = Math.round((totalScore / totalSentences) * 100);
 
-  return {
-    completedLessons,
-    totalLessons: lessons.length,
-    percentage,
-  };
+    return {
+      completedLessons,
+      totalLessons: lessons.length,
+      percentage,
+    };
+  }, 3 * 60 * 1000); // Cache for 3 minutes
 }

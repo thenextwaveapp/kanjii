@@ -1,10 +1,12 @@
 import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
 import { supabase } from './supabase';
+import { clearCache } from './cache';
 
 WebBrowser.maybeCompleteAuthSession();
 
 export async function signInWithGoogle() {
+  // Use universal link for iOS, custom scheme for Android
   const redirectUrl = Linking.createURL('auth');
 
   const { data, error } = await supabase.auth.signInWithOAuth({
@@ -12,6 +14,10 @@ export async function signInWithGoogle() {
     options: {
       redirectTo: redirectUrl,
       skipBrowserRedirect: true,
+      queryParams: {
+        access_type: 'offline',
+        prompt: 'consent',
+      },
     },
   });
 
@@ -48,6 +54,7 @@ export async function signInWithGoogle() {
 
 export async function signOut() {
   await supabase.auth.signOut();
+  clearCache(); // Clear all cached data on sign out
 }
 
 export function onAuthStateChange(callback) {
