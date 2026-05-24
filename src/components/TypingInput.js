@@ -138,10 +138,11 @@ export default function TypingInput({ target, onMatch, onAttempt, onFocus }) {
     Keyboard.dismiss();
 
     setTimeout(() => {
+      const userInput = value; // Capture before clearing
       setValue('');
       setStatus('idle');
       setGrade(null);
-      onMatch(calculatedGrade);
+      onMatch(calculatedGrade, userInput);
     }, 1200);
   };
 

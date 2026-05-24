@@ -18,6 +18,7 @@ import { fetchSentence, fetchTargetedSentence } from '../services/sentences';
 import { recordCompletion, recordSkip } from '../services/progress';
 import { fetchLessonSentences, updateLessonProgress } from '../services/collections';
 import { fetchSentenceLists, addSentenceToList, removeSentenceFromList, getSentenceLists, fetchListSentences } from '../services/sentenceLists';
+import { speakJapanese } from '../services/tts';
 
 export default function PracticeScreen({ navigation, route, user }) {
   const {
@@ -29,6 +30,7 @@ export default function PracticeScreen({ navigation, route, user }) {
     lessonId = null,       // UUID — lesson mode, ordered sentences
     lessonName = null,     // string — lesson name for display
     collectionName = null, // string — collection name for display
+    collectionId = null,   // UUID — collection ID for finding next lesson
     listId = null,         // UUID — list mode, sentences from custom list
     listName = null,       // string — list name for display
   } = route?.params || {};
@@ -51,13 +53,14 @@ export default function PracticeScreen({ navigation, route, user }) {
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [sentenceLists, setSentenceLists] = useState([]);
   const [currentSentenceListIds, setCurrentSentenceListIds] = useState([]);
+  const [autoPlaying, setAutoPlaying] = useState(false);
 
   const sessionStart = useRef(new Date().toISOString());
   const roundResults = useRef([]);
   const roundStart = useRef(Date.now());
   const scrollRef = useRef(null);
 
-  const loadSentence = async () => {
+  const loadSentence = async (roundNumber = currentRound) => {
     setLoading(true);
     setError(null);
     setSentence(null);
@@ -68,7 +71,7 @@ export default function PracticeScreen({ navigation, route, user }) {
 
       if (isLesson) {
         // Lesson mode: get next sentence from ordered list
-        const nextIndex = currentRound - 1;
+        const nextIndex = roundNumber - 1;
         if (nextIndex < lessonSentences.length) {
           data = lessonSentences[nextIndex];
         } else {
@@ -76,7 +79,7 @@ export default function PracticeScreen({ navigation, route, user }) {
         }
       } else if (isList) {
         // List mode: get next sentence from list
-        const nextIndex = currentRound - 1;
+        const nextIndex = roundNumber - 1;
         if (nextIndex < listSentences.length) {
           data = listSentences[nextIndex];
         } else {
@@ -171,6 +174,28 @@ export default function PracticeScreen({ navigation, route, user }) {
     fetchSentenceLists();
   }, [sentence?.id]);
 
+  // Auto-play TTS when new sentence loads
+  useEffect(() => {
+    if (sentence?.japanese && !loading && !done) {
+      setAutoPlaying(true);
+      // Delay to let UI settle and show blue glow
+      const timer = setTimeout(async () => {
+        try {
+          await speakJapanese(sentence.japanese);
+        } catch (e) {
+          console.error('Auto-play TTS failed:', e);
+        } finally {
+          // Keep glow for a bit after audio starts
+          setTimeout(() => setAutoPlaying(false), 800);
+        }
+      }, 450);
+      return () => {
+        clearTimeout(timer);
+        setAutoPlaying(false);
+      };
+    }
+  }, [sentence?.id, loading, done]);
+
   const finishSession = async (results) => {
     if (isSingle) {
       navigation.goBack();
@@ -196,10 +221,15 @@ export default function PracticeScreen({ navigation, route, user }) {
       rounds: totalRounds,
       difficulty: isLesson ? lessonName : isDrill ? 'Drill' : difficulty,
       domain: isLesson ? collectionName : isDrill ? 'Weak kanji' : domain,
+      isLesson,
+      lessonId,
+      lessonName,
+      collectionName,
+      collectionId,
     });
   };
 
-  const handleMatch = async (grade) => {
+  const handleMatch = async (grade, userInput) => {
     const elapsed = Date.now() - roundStart.current;
     roundResults.current.push({
       round: currentRound,
@@ -207,6 +237,7 @@ export default function PracticeScreen({ navigation, route, user }) {
       timeMs: elapsed,
       sentence,
       grade, // ○, △, or ×
+      userInput, // What the user actually typed
     });
 
     if (user?.id) {
@@ -224,8 +255,9 @@ export default function PracticeScreen({ navigation, route, user }) {
       setDone(true);
       finishSession(roundResults.current);
     } else {
-      setCurrentRound((r) => r + 1);
-      loadSentence();
+      const nextRound = currentRound + 1;
+      setCurrentRound(nextRound);
+      loadSentence(nextRound);
     }
   };
 
@@ -251,8 +283,9 @@ export default function PracticeScreen({ navigation, route, user }) {
       setDone(true);
       finishSession(roundResults.current);
     } else {
-      setCurrentRound((r) => r + 1);
-      loadSentence();
+      const nextRound = currentRound + 1;
+      setCurrentRound(nextRound);
+      loadSentence(nextRound);
     }
   };
 
@@ -391,11 +424,13 @@ export default function PracticeScreen({ navigation, route, user }) {
             <>
               <Text style={styles.instruction}>Tap words to reveal, then type</Text>
               <SnippetCard
+                key={sentence.id}
                 snippet={sentence}
                 onViewDetail={() => navigation.navigate('SentenceDetail', { sentence })}
                 sentenceLists={sentenceLists}
                 sentenceListIds={currentSentenceListIds}
                 onSaveToList={handleSaveToList}
+                autoPlaying={autoPlaying}
               />
               <TypingInput
                 target={sentence.japanese}

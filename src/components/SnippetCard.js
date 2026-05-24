@@ -29,7 +29,7 @@ function toHepburn(kana) {
   return r;
 }
 
-export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [], onSaveToList, sentenceListIds = [] }) {
+export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [], onSaveToList, sentenceListIds = [], autoPlaying = false }) {
   const { settings } = useSettings();
   const [revealed, setRevealed] = useState({});
   const [speaking, setSpeaking] = useState(false);
@@ -124,15 +124,15 @@ export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [],
 
   return (
     <TouchableOpacity
-      style={[styles.card, speaking && styles.cardPlaying]}
+      style={[styles.card, (speaking || autoPlaying) && styles.cardPlaying]}
       onLongPress={speak}
       activeOpacity={1}
       delayLongPress={300}
     >
       {/* Hold indicator */}
       <View style={styles.holdIndicator}>
-        <Text style={[styles.holdText, speaking && styles.holdTextActive]}>
-          {speaking ? '🔊 Playing' : 'Hold to speak'}
+        <Text style={[styles.holdText, (speaking || autoPlaying) && styles.holdTextActive]}>
+          {speaking || autoPlaying ? '🔊 Playing' : 'Hold to speak'}
         </Text>
       </View>
 

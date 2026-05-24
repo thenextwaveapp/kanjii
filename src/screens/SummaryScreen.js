@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,9 +6,11 @@ import {
   ScrollView,
   TouchableOpacity,
   SafeAreaView,
+  Animated,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { getNewKanjiSince } from '../services/progress';
+import { fetchLessons } from '../services/collections';
 
 function formatTime(ms) {
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
@@ -39,31 +41,99 @@ function getGradeLabel(grade) {
 }
 
 export default function SummaryScreen({ navigation, route, user }) {
-  const { results = [], sessionStart, rounds, difficulty, domain = 'Any' } = route.params || {};
+  const {
+    results = [],
+    sessionStart,
+    rounds,
+    difficulty,
+    domain = 'Any',
+    isLesson = false,
+    lessonId = null,
+    lessonName = null,
+    collectionName = null,
+    collectionId = null,
+  } = route.params || {};
   const [newKanji, setNewKanji] = useState([]);
+  const [nextLesson, setNextLesson] = useState(null);
+
+  const allPerfect = results.every(r => r.grade === '○');
+  const isComplete = results.length === rounds && (!isLesson || allPerfect);
+
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(0.9)).current;
 
   const perfect = results.filter((r) => r.grade === '○').length;
   const good = results.filter((r) => r.grade === '△').length;
   const skipped = results.filter((r) => r.grade === '×' || r.skipped).length;
   const streak = longestCorrectStreak(results);
-  const avgTime = results.length > 0
-    ? results.reduce((s, r) => s + r.timeMs, 0) / results.length
-    : 0;
+  const totalTime = results.reduce((s, r) => s + r.timeMs, 0);
+  const avgTime = results.length > 0 ? totalTime / results.length : 0;
 
   useEffect(() => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+    // Animate in
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 600,
+        useNativeDriver: true,
+      }),
+      Animated.spring(scaleAnim, {
+        toValue: 1,
+        tension: 50,
+        friction: 7,
+        useNativeDriver: true,
+      }),
+    ]).start();
+
     if (user?.id && sessionStart) {
       getNewKanjiSince(user.id, sessionStart).then(setNewKanji);
+    }
+
+    // Fetch next lesson if this was a completed lesson
+    if (isLesson && isComplete && collectionId && user?.id) {
+      fetchLessons(collectionId, user.id).then(lessons => {
+        const currentIndex = lessons.findIndex(l => l.id === lessonId);
+        if (currentIndex >= 0 && currentIndex < lessons.length - 1) {
+          const next = lessons[currentIndex + 1];
+          // Check if next lesson is unlocked (current lesson should now be complete)
+          setNextLesson(next);
+        }
+      }).catch(e => {
+        console.error('Failed to fetch next lesson:', e);
+      });
     }
   }, []);
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.title}>Session complete</Text>
-        <Text style={styles.subtitle}>
-          {rounds} rounds · {domain === 'Any' ? 'Any topic' : domain} · {difficulty}
-        </Text>
+    <View style={[styles.container, allPerfect && styles.containerPerfect]}>
+      <SafeAreaView style={styles.safe}>
+        <ScrollView contentContainerStyle={styles.content}>
+          <Animated.View
+            style={{
+              opacity: fadeAnim,
+              transform: [{ scale: scaleAnim }],
+            }}
+          >
+            {isLesson && isComplete ? (
+              <>
+                <Text style={styles.title}>
+                  {allPerfect ? '🎉 Perfect! Lesson complete!' : '✓ Lesson complete!'}
+                </Text>
+                <Text style={styles.subtitle}>
+                  {collectionName} · {lessonName}
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.title}>Session complete</Text>
+                <Text style={styles.subtitle}>
+                  {rounds} rounds · {domain === 'Any' ? 'Any topic' : domain} · {difficulty}
+                </Text>
+              </>
+            )}
+          </Animated.View>
 
         {/* Top stats */}
         <View style={styles.statsRow}>
@@ -73,6 +143,7 @@ export default function SummaryScreen({ navigation, route, user }) {
         </View>
         <View style={styles.statsRow}>
           <StatBox label="Best streak" value={streak} />
+          <StatBox label="Total time" value={formatTime(totalTime)} raw />
           <StatBox label="Avg. time" value={formatTime(avgTime)} raw />
         </View>
 
@@ -86,10 +157,24 @@ export default function SummaryScreen({ navigation, route, user }) {
 
             return (
               <View key={i} style={styles.roundRow}>
-                <Text style={[styles.gradeSymbol, { color: gradeColor }]}>{grade}</Text>
-                <Text style={styles.roundLabel}>Round {r.round}</Text>
-                <Text style={styles.roundTime}>{formatTime(r.timeMs)}</Text>
-                <Text style={[styles.roundStatus, { color: gradeColor }]}>{gradeLabel}</Text>
+                <View style={styles.roundHeader}>
+                  <Text style={[styles.gradeSymbol, { color: gradeColor }]}>{grade}</Text>
+                  <Text style={styles.roundLabel}>Round {r.round}</Text>
+                  <Text style={styles.roundTime}>{formatTime(r.timeMs)}</Text>
+                  <Text style={[styles.roundStatus, { color: gradeColor }]}>{gradeLabel}</Text>
+                </View>
+                {r.sentence && (
+                  <View style={styles.roundContent}>
+                    <Text style={styles.sentenceText}>{r.sentence.japanese}</Text>
+                    <Text style={styles.sentenceTranslation}>{r.sentence.english}</Text>
+                    {grade === '△' && r.userInput && (
+                      <View style={styles.correctionBox}>
+                        <Text style={styles.correctionLabel}>You typed:</Text>
+                        <Text style={styles.userInputText}>{r.userInput}</Text>
+                      </View>
+                    )}
+                  </View>
+                )}
               </View>
             );
           })}
@@ -113,19 +198,49 @@ export default function SummaryScreen({ navigation, route, user }) {
         )}
 
         {/* Actions */}
+        {nextLesson && isLesson && isComplete ? (
+          <TouchableOpacity
+            style={styles.nextLessonButton}
+            onPress={() => {
+              navigation.replace('Practice', {
+                lessonId: nextLesson.id,
+                lessonName: nextLesson.name,
+                collectionName,
+                collectionId,
+              });
+            }}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.nextLessonButtonText}>Continue to Next Lesson →</Text>
+          </TouchableOpacity>
+        ) : null}
+
         <TouchableOpacity
-          style={styles.primaryButton}
-          onPress={() => navigation.replace('RoundSelect')}
+          style={nextLesson && isLesson && isComplete ? styles.secondaryButton : styles.primaryButton}
+          onPress={() => {
+            if (isLesson && lessonId) {
+              navigation.replace('Practice', {
+                lessonId,
+                lessonName,
+                collectionName,
+                collectionId,
+              });
+            } else {
+              navigation.replace('RoundSelect');
+            }
+          }}
           activeOpacity={0.85}
         >
-          <Text style={styles.primaryButtonText}>Play again</Text>
+          <Text style={nextLesson && isLesson && isComplete ? styles.secondaryButtonText : styles.primaryButtonText}>
+            Play again
+          </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.secondaryButton}
           onPress={() => navigation.reset({
-            index: 0,
-            routes: [{ name: 'CollectionList' }],
+            index: 1,
+            routes: [{ name: 'Home' }, { name: 'CollectionList' }],
           })}
           activeOpacity={0.7}
         >
@@ -133,6 +248,7 @@ export default function SummaryScreen({ navigation, route, user }) {
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
+    </View>
   );
 }
 
@@ -148,7 +264,9 @@ function StatBox({ label, value, total, accent, raw, color }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#0A0A0A' },
+  container: { flex: 1, backgroundColor: '#0A0A0A' },
+  containerPerfect: { backgroundColor: '#0D1117' },
+  safe: { flex: 1 },
   content: { padding: 24, paddingBottom: 60 },
   title: { color: '#EFEFEF', fontSize: 28, fontWeight: '900', letterSpacing: -0.5, marginTop: 16 },
   subtitle: { color: '#555', fontSize: 14, marginTop: 4, marginBottom: 28 },
@@ -168,8 +286,16 @@ const styles = StyleSheet.create({
     marginBottom: 32, overflow: 'hidden',
   },
   roundRow: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12,
-    borderBottomWidth: 1, borderBottomColor: '#1A1A1A', gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1A1A1A',
+  },
+  roundHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
   },
   gradeSymbol: {
     fontSize: 18,
@@ -179,6 +305,41 @@ const styles = StyleSheet.create({
   roundLabel: { color: '#EFEFEF', fontSize: 13, flex: 1 },
   roundTime: { color: '#555', fontSize: 12 },
   roundStatus: { fontSize: 11, width: 60, textAlign: 'right', fontWeight: '600' },
+  roundContent: {
+    paddingLeft: 34,
+    gap: 4,
+  },
+  sentenceText: {
+    color: '#EFEFEF',
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  sentenceTranslation: {
+    color: '#888',
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  correctionBox: {
+    marginTop: 8,
+    padding: 10,
+    backgroundColor: 'rgba(76, 175, 80, 0.1)',
+    borderRadius: 6,
+    borderLeftWidth: 3,
+    borderLeftColor: '#4CAF50',
+  },
+  correctionLabel: {
+    color: '#4CAF50',
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  userInputText: {
+    color: '#EFEFEF',
+    fontSize: 13,
+  },
   kanjiRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 32 },
   newKanjiCard: {
     backgroundColor: '#111', borderRadius: 8, borderWidth: 1, borderColor: '#E85D3A',
@@ -186,6 +347,24 @@ const styles = StyleSheet.create({
   },
   newKanjiChar: { fontSize: 26, color: '#EFEFEF' },
   newKanjiMeaning: { fontSize: 9, color: '#555', textAlign: 'center' },
+  nextLessonButton: {
+    backgroundColor: '#4A90E2',
+    borderRadius: 12,
+    paddingVertical: 20,
+    alignItems: 'center',
+    marginBottom: 12,
+    shadowColor: '#4A90E2',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  nextLessonButtonText: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
   primaryButton: {
     backgroundColor: '#E85D3A', borderRadius: 10, paddingVertical: 18, alignItems: 'center', marginBottom: 12,
   },
