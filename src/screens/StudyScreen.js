@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -12,7 +12,6 @@ import {
   Animated,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { useFocusEffect } from '@react-navigation/native';
 import { fetchKanji, fetchUserSentences } from '../services/progress';
 import { toHiragana, toRomaji } from 'wanakana';
 import { supabase } from '../services/supabase';
@@ -26,9 +25,29 @@ import { speakJapanese } from '../services/tts';
 import { useSettings } from '../contexts/SettingsContext';
 import { VOICE_OPTIONS } from '../services/settings';
 import { ttsLargeCardStyles, ttsSmallChipStyles, startPulseAnimation, stopPulseAnimation } from '../styles/ttsStyles';
+import OnboardingTooltip from '../components/OnboardingTooltip';
+
+const STUDY_ONBOARDING_CARDS = [
+  {
+    title: 'Review Your Collection 📚',
+    description: 'Browse all the kanji and sentences you\'ve learned. Switch between Kanji and Sentences tabs to explore your progress.',
+  },
+  {
+    title: 'Tap for Details 💡',
+    description: 'Tap any kanji to see its meanings, readings, and example sentences. Tap any word in a sentence to learn more about it.',
+  },
+];
 
 const KANJI_TABS = ['All', 'Needs work', 'Mastered'];
 const KANJI_RE = /[\u4E00-\u9FFF\u3400-\u4DBF]/g;
+const SORT_OPTIONS = [
+  { value: 'last_seen', label: 'Last Encountered' },
+  { value: 'first_seen', label: 'First Encountered' },
+  { value: 'most_encountered', label: 'Most Encountered' },
+  { value: 'most_practiced', label: 'Most Practiced' },
+  { value: 'least_practiced', label: 'Least Practiced' },
+  { value: 'jlpt_level', label: 'JLPT Level' },
+];
 
 function extractKanjiChars(text) {
   return [...new Set((text || '').match(KANJI_RE) || [])];
@@ -43,7 +62,7 @@ function getMasteryColor(mastery) {
 
 export default function StudyScreen({ navigation, route, user }) {
   const { initialMode, highlightSentenceId } = route.params || {};
-  const { settings } = useSettings();
+  const { settings, updateSetting } = useSettings();
   const [mode, setMode] = useState(initialMode || 'kanji'); // 'kanji' | 'sentences'
   const [kanjiList, setKanjiList] = useState([]);
   const [sentences, setSentences] = useState([]);
@@ -52,11 +71,13 @@ export default function StudyScreen({ navigation, route, user }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
+  const [sortBy, setSortBy] = useState('last_seen'); // Sort option
   const [highlightedSentenceId, setHighlightedSentenceId] = useState(highlightSentenceId);
   const [playingSentenceId, setPlayingSentenceId] = useState(null);
   const [playingWordKey, setPlayingWordKey] = useState(null);
   const wordPulseAnim = useRef(new Animated.Value(0)).current;
   const wordPulseAnimationRef = useRef(null);
+  const [showTooltip, setShowTooltip] = useState(false);
 
   // Sentence lists state
   const [sentenceLists, setSentenceLists] = useState([]);
@@ -65,22 +86,32 @@ export default function StudyScreen({ navigation, route, user }) {
   const [newListColor, setNewListColor] = useState('#E85D3A');
   const [activeListFilters, setActiveListFilters] = useState([]);
 
-  useFocusEffect(
-    useCallback(() => {
-      if (!user?.id) { setLoading(false); return; }
-      setLoading(true);
-      Promise.all([
-        fetchKanji(user.id),
-        fetchUserSentences(user.id),
-        fetchSentenceLists(user.id),
-      ]).then(([kanji, sents, lists]) => {
-        setKanjiList(kanji);
-        setSentences(sents);
-        setSentenceLists(lists);
-        setLoading(false);
-      });
-    }, [user?.id])
-  );
+  useEffect(() => {
+    if (!user?.id) { setLoading(false); return; }
+    setLoading(true);
+    Promise.all([
+      fetchKanji(user.id, sortBy),
+      fetchUserSentences(user.id, sortBy),
+      fetchSentenceLists(user.id),
+    ]).then(([kanji, sents, lists]) => {
+      setKanjiList(kanji);
+      setSentences(sents);
+      setSentenceLists(lists);
+      setLoading(false);
+    });
+  }, [user?.id, sortBy]);
+
+  // Show tooltip on first visit (only when data loads)
+  useEffect(() => {
+    if (settings && !settings.onboardingStudy && !loading && (kanjiList.length > 0 || sentences.length > 0)) {
+      setShowTooltip(true);
+    }
+  }, [settings, loading, kanjiList.length, sentences.length]);
+
+  const handleTooltipComplete = async () => {
+    setShowTooltip(false);
+    await updateSetting('onboardingStudy', true);
+  };
 
   const handleCreateList = async () => {
     if (!newListName.trim() || !user?.id) return;
@@ -316,13 +347,42 @@ export default function StudyScreen({ navigation, route, user }) {
 
         setSearchResults(merged);
       } else {
-        // Search sentences by japanese or english text
-        const filtered = sentences.filter(s =>
-          s.japanese?.toLowerCase().includes(query) ||
-          s.japanese?.includes(hiraganaQuery) ||
-          s.english?.toLowerCase().includes(query)
-        );
-        setSearchResults(filtered);
+        // Search ALL sentences in database (not just user's practiced ones)
+        const { data: sentenceMatches, error } = await supabase
+          .from('sentences')
+          .select('id, japanese, english, words, jlpt_level, domain')
+          .or(`japanese.ilike.%${query}%,english.ilike.%${query}%`)
+          .limit(50);
+
+        if (error) {
+          console.error('Sentence search error:', error);
+          setSearchResults([]);
+        } else {
+          // Additional filtering for furigana/romaji matches
+          const results = (sentenceMatches || []).filter(sentence => {
+            // Check if query matches in Japanese or English (already filtered by SQL)
+            const matchesInSentence =
+              sentence.japanese?.toLowerCase().includes(query) ||
+              sentence.english?.toLowerCase().includes(query);
+
+            // Check if query matches in word furigana or romaji
+            const words = sentence.words || [];
+            const matchesInWords = words.some(w => {
+              const furigana = w.furigana?.toLowerCase() || '';
+              const romaji = w.furigana ? toRomaji(w.furigana).toLowerCase() : '';
+              const wordText = w.word?.toLowerCase() || '';
+              return furigana.includes(query) ||
+                     furigana.includes(hiraganaQuery) ||
+                     romaji.includes(query) ||
+                     wordText.includes(query) ||
+                     wordText.includes(hiraganaQuery);
+            });
+
+            return matchesInSentence || matchesInWords;
+          });
+
+          setSearchResults(results);
+        }
       }
 
       setSearching(false);
@@ -506,6 +566,8 @@ export default function StudyScreen({ navigation, route, user }) {
           filtered={filteredKanji}
           activeTab={activeTab}
           setActiveTab={setActiveTab}
+          sortBy={sortBy}
+          setSortBy={setSortBy}
           weakKanji={weakKanji}
           onDrill={startDrill}
           navigation={navigation}
@@ -579,11 +641,21 @@ export default function StudyScreen({ navigation, route, user }) {
           </View>
         </View>
       </Modal>
+
+      {/* First-time onboarding tooltip */}
+      <OnboardingTooltip
+        visible={showTooltip}
+        cards={STUDY_ONBOARDING_CARDS}
+        onComplete={handleTooltipComplete}
+      />
     </SafeAreaView>
   );
 }
 
-function KanjiView({ kanjiList, filtered, activeTab, setActiveTab, weakKanji, onDrill, navigation }) {
+function KanjiView({ kanjiList, filtered, activeTab, setActiveTab, sortBy, setSortBy, weakKanji, onDrill, navigation }) {
+  const [showSortMenu, setShowSortMenu] = useState(false);
+  const currentSortLabel = SORT_OPTIONS.find(opt => opt.value === sortBy)?.label || 'Last Encountered';
+
   return (
     <>
       {/* Sub-tabs */}
@@ -598,6 +670,41 @@ function KanjiView({ kanjiList, filtered, activeTab, setActiveTab, weakKanji, on
           </TouchableOpacity>
         ))}
       </View>
+
+      {/* Sort dropdown */}
+      <View style={styles.sortContainer}>
+        <Text style={styles.sortLabel}>Sort by:</Text>
+        <TouchableOpacity
+          style={styles.sortButton}
+          onPress={() => setShowSortMenu(!showSortMenu)}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.sortButtonText}>{currentSortLabel}</Text>
+          <Text style={styles.sortButtonArrow}>{showSortMenu ? '▲' : '▼'}</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Sort menu */}
+      {showSortMenu && (
+        <View style={styles.sortMenu}>
+          {SORT_OPTIONS.map((option) => (
+            <TouchableOpacity
+              key={option.value}
+              style={[styles.sortOption, sortBy === option.value && styles.sortOptionActive]}
+              onPress={() => {
+                setSortBy(option.value);
+                setShowSortMenu(false);
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.sortOptionText, sortBy === option.value && styles.sortOptionTextActive]}>
+                {option.label}
+              </Text>
+              {sortBy === option.value && <Text style={styles.sortOptionCheck}>✓</Text>}
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
 
       {/* Drill button on Needs work */}
       {activeTab === 'Needs work' && weakKanji.length > 0 && (
@@ -1367,6 +1474,73 @@ const styles = StyleSheet.create({
   },
   modalButtonText: {
     color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  sortContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    gap: 10,
+  },
+  sortLabel: {
+    color: '#888',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  sortButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#1A1A1A',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#333',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  sortButtonText: {
+    color: '#EFEFEF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  sortButtonArrow: {
+    color: '#888',
+    fontSize: 10,
+  },
+  sortMenu: {
+    marginHorizontal: 20,
+    marginBottom: 12,
+    backgroundColor: '#1A1A1A',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#333',
+    overflow: 'hidden',
+  },
+  sortOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#222',
+  },
+  sortOptionActive: {
+    backgroundColor: 'rgba(232, 93, 58, 0.1)',
+  },
+  sortOptionText: {
+    color: '#EFEFEF',
+    fontSize: 14,
+  },
+  sortOptionTextActive: {
+    color: '#E85D3A',
+    fontWeight: '700',
+  },
+  sortOptionCheck: {
+    color: '#E85D3A',
     fontSize: 16,
     fontWeight: '700',
   },

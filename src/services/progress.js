@@ -282,6 +282,7 @@ export async function fetchKanjiDetail(userId, kanji) {
       // Always include dictionary readings/meanings separately
       dictReadings: dictData?.readings || [],
       dictMeanings: dictData?.meanings || [],
+      readings_structured: dictData?.readings_structured || null,
     };
   } else if (dictData) {
     // New kanji - use dictionary data with default stats
@@ -291,6 +292,7 @@ export async function fetchKanjiDetail(userId, kanji) {
       readings: dictData.readings || [],
       dictReadings: dictData.readings || [],
       dictMeanings: dictData.meanings || [],
+      readings_structured: dictData.readings_structured || null,
       jlpt_level: 'unknown',
       seen_count: 0,
       skip_count: 0,
@@ -348,13 +350,31 @@ export async function fetchKanjiDetail(userId, kanji) {
   };
 }
 
-export async function fetchUserSentences(userId) {
-  const { data } = await supabase
+export async function fetchUserSentences(userId, sortBy = 'last_seen') {
+  let query = supabase
     .from('user_progress')
     .select('attempts, completed_at, best_grade, practice_count, last_practiced_at, sentences(*)')
-    .eq('user_id', userId)
-    .order('completed_at', { ascending: false })
-    .limit(60);
+    .eq('user_id', userId);
+
+  // Apply same sorting logic as kanji
+  switch (sortBy) {
+    case 'last_seen':
+      query = query.order('last_practiced_at', { ascending: false, nullsLast: true });
+      break;
+    case 'first_seen':
+      query = query.order('completed_at', { ascending: true, nullsLast: true });
+      break;
+    case 'most_practiced':
+      query = query.order('practice_count', { ascending: false });
+      break;
+    case 'least_practiced':
+      query = query.order('practice_count', { ascending: true });
+      break;
+    default:
+      query = query.order('last_practiced_at', { ascending: false, nullsLast: true });
+  }
+
+  const { data } = await query.limit(60);
 
   const sentences = (data || [])
     .map((row) => ({
@@ -391,12 +411,46 @@ export async function fetchStats(userId) {
   return data;
 }
 
-export async function fetchKanji(userId) {
-  const { data } = await supabase
+export async function fetchKanji(userId, sortBy = 'last_seen') {
+  let query = supabase
     .from('user_kanji')
     .select('*')
-    .eq('user_id', userId)
-    .order('seen_count', { ascending: false });
+    .eq('user_id', userId);
+
+  // For most_encountered, we'll sort after fetching (seen_count + skip_count)
+  // For other sorts, apply sorting in the query
+  if (sortBy !== 'most_encountered') {
+    switch (sortBy) {
+      case 'last_seen':
+        query = query.order('last_seen_at', { ascending: false, nullsLast: true });
+        break;
+      case 'first_seen':
+        query = query.order('first_seen_at', { ascending: true, nullsLast: true });
+        break;
+      case 'most_practiced':
+        query = query.order('seen_count', { ascending: false });
+        break;
+      case 'least_practiced':
+        query = query.order('seen_count', { ascending: true });
+        break;
+      case 'jlpt_level':
+        query = query.order('jlpt_level', { ascending: true, nullsLast: true });
+        break;
+      default:
+        query = query.order('last_seen_at', { ascending: false, nullsLast: true });
+    }
+  }
+
+  let { data } = await query;
+
+  // Sort by total encounters (seen_count + skip_count) if needed
+  if (sortBy === 'most_encountered' && data) {
+    data = data.sort((a, b) => {
+      const totalA = (a.seen_count || 0) + (a.skip_count || 0);
+      const totalB = (b.seen_count || 0) + (b.skip_count || 0);
+      return totalB - totalA; // Descending order
+    });
+  }
 
   if (!data || data.length === 0) return [];
 

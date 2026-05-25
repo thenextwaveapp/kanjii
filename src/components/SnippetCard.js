@@ -29,6 +29,11 @@ export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [],
 
   const isInAnyList = sentenceListIds.length > 0;
 
+  // Get the color of the first list this sentence is in
+  const activeListColor = isInAnyList
+    ? sentenceLists.find(list => sentenceListIds.includes(list.id))?.color
+    : null;
+
   if (!snippet) return null;
 
   const { japanese, english, words, best_grade, practice_count, last_practiced_at } = snippet;
@@ -142,7 +147,11 @@ export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [],
       {onSaveToList && sentenceLists.length > 0 && (
         <View style={styles.bottomLeftButtons}>
           <TouchableOpacity
-            style={[styles.iconButton, isInAnyList && styles.iconButtonSaved]}
+            style={[
+              styles.iconButton,
+              isInAnyList && styles.iconButtonSaved,
+              isInAnyList && activeListColor && { backgroundColor: activeListColor, borderColor: activeListColor }
+            ]}
             onPress={() => setShowSaveModal(true)}
             activeOpacity={0.7}
           >
