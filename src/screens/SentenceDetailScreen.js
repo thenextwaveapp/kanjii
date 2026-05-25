@@ -90,6 +90,7 @@ export default function SentenceDetailScreen({ navigation, route, user }) {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [playing, setPlaying] = useState(false);
+  const [currentSound, setCurrentSound] = useState(null);
   const [playingWord, setPlayingWord] = useState(null);
   const pulseAnim = useRef(new Animated.Value(0)).current;
   const pulseAnimationRef = useRef(null);
@@ -123,18 +124,33 @@ export default function SentenceDetailScreen({ navigation, route, user }) {
   };
 
   const handleSpeak = async () => {
-    if (playing) return;
-    setPlaying(true);
+    if (playing && currentSound) {
+      await stopSpeaking(currentSound);
+      setCurrentSound(null);
+      setPlaying(false);
+      return;
+    }
+
     try {
+      setPlaying(true);
       const voiceConfig = VOICE_OPTIONS.find(v => v.value === settings.voiceGender);
-      await speakJapanese(sentence.japanese, {
+      const sound = await speakJapanese(sentence.japanese, {
         voice: voiceConfig?.voice,
         rate: settings.speechRate,
       });
+
+      setCurrentSound(sound);
+
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (status.didJustFinish) {
+          setPlaying(false);
+          setCurrentSound(null);
+        }
+      });
     } catch (error) {
       console.error('TTS error:', error);
-    } finally {
       setPlaying(false);
+      setCurrentSound(null);
     }
   };
 
@@ -210,20 +226,20 @@ export default function SentenceDetailScreen({ navigation, route, user }) {
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
         {/* Main sentence card */}
-        <View style={[styles.heroBox, playing && ttsLargeCardStyles.playing]}>
-          <View style={styles.sentenceRow}>
-            <Text style={styles.sentenceJapanese}>{sentence.japanese}</Text>
-            <TouchableOpacity
-              style={styles.speakerButton}
-              onPress={handleSpeak}
-              disabled={playing}
-            >
-              <Text style={styles.speakerIcon}>🔊</Text>
-            </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.heroBox, playing && ttsLargeCardStyles.playing]}
+          onLongPress={handleSpeak}
+          activeOpacity={1}
+          delayLongPress={300}
+        >
+          {/* Hold indicator */}
+          <View style={styles.holdIndicator}>
+            <Text style={[styles.holdText, playing && styles.holdTextActive]}>
+              {playing ? '🔊 Playing' : 'Hold to speak'}
+            </Text>
           </View>
-          {playing && (
-            <Text style={ttsLargeCardStyles.playingText}>🔊 Playing</Text>
-          )}
+
+          <Text style={styles.sentenceJapanese}>{sentence.japanese}</Text>
           <Text style={styles.sentenceRomaji}>{romaji}</Text>
           <Text style={styles.sentenceEnglish}>{sentence.english}</Text>
 
@@ -240,7 +256,7 @@ export default function SentenceDetailScreen({ navigation, route, user }) {
               </View>
             )}
           </View>
-        </View>
+        </TouchableOpacity>
 
         {/* Stats */}
         {loading ? (
@@ -297,6 +313,10 @@ export default function SentenceDetailScreen({ navigation, route, user }) {
                   backgroundColor: 'rgba(74, 144, 226, 0.1)',
                 } : {};
 
+                // Generate IME-compatible romaji for typing
+                const reading = word.furigana || word.word;
+                const wordRomaji = toRomaji(reading);
+
                 return (
                   <TouchableOpacity
                     key={`${word.word}-${index}`}
@@ -309,6 +329,9 @@ export default function SentenceDetailScreen({ navigation, route, user }) {
                       <Text style={styles.wordText}>{word.word}</Text>
                       {word.furigana && (
                         <Text style={styles.wordFurigana}>{word.furigana}</Text>
+                      )}
+                      {wordRomaji && (
+                        <Text style={styles.wordRomaji}>{wordRomaji}</Text>
                       )}
                       {word.meaning && (
                         <Text style={styles.wordMeaning}>{word.meaning}</Text>
@@ -377,25 +400,30 @@ const styles = StyleSheet.create({
     padding: 24,
     marginBottom: 16,
   },
-  sentenceRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    marginBottom: 16,
+  holdIndicator: {
+    position: 'absolute',
+    top: 12,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 1,
+  },
+  holdText: {
+    fontSize: 10,
+    color: '#444',
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  },
+  holdTextActive: {
+    color: '#4A90E2',
   },
   sentenceJapanese: {
-    flex: 1,
     color: '#EFEFEF',
     fontSize: 24,
     lineHeight: 36,
     fontWeight: '400',
-  },
-  speakerButton: {
-    padding: 8,
-    marginLeft: 12,
-  },
-  speakerIcon: {
-    fontSize: 24,
+    marginTop: 16,
+    marginBottom: 16,
   },
   sentenceRomaji: {
     color: '#666',
@@ -535,6 +563,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     letterSpacing: 0.5,
+  },
+  wordRomaji: {
+    color: '#666',
+    fontSize: 10,
+    fontStyle: 'italic',
   },
   wordMeaning: {
     color: '#888',

@@ -14,11 +14,33 @@ import {
 import * as Haptics from 'expo-haptics';
 import SnippetCard from '../components/SnippetCard';
 import TypingInput from '../components/TypingInput';
+import OnboardingTooltip from '../components/OnboardingTooltip';
+import { useSettings } from '../contexts/SettingsContext';
 import { fetchSentence, fetchTargetedSentence } from '../services/sentences';
 import { recordCompletion, recordSkip } from '../services/progress';
 import { fetchLessonSentences, updateLessonProgress } from '../services/collections';
 import { fetchSentenceLists, addSentenceToList, removeSentenceFromList, getSentenceLists, fetchListSentences } from '../services/sentenceLists';
 import { speakJapanese } from '../services/tts';
+import { VOICE_OPTIONS } from '../services/settings';
+
+const PRACTICE_ONBOARDING_CARDS = [
+  {
+    title: 'Set Up Japanese Keyboard ⌨️',
+    description: 'Before you start, make sure you\'ve added a Japanese keyboard to your device. You can type in romaji (e.g., "ko-n-ni-chi-ha" → こんにちは), kana, or use voice input.',
+  },
+  {
+    title: 'Tap to Reveal Words 👆',
+    description: 'Tap any blurred word to reveal its meaning. This helps you understand the sentence before typing it.',
+  },
+  {
+    title: 'Use Translation Helpers 訳',
+    description: 'Tap the 訳 button to see the English translation. When it\'s visible, tap RO/EN to switch between romaji and English views.',
+  },
+  {
+    title: 'Voice Input Available 🎤',
+    description: 'The input field supports voice typing! Tap the microphone on your keyboard (when using Japanese input) or hold the spacebar to speak.',
+  },
+];
 
 export default function PracticeScreen({ navigation, route, user }) {
   const {
@@ -54,11 +76,26 @@ export default function PracticeScreen({ navigation, route, user }) {
   const [sentenceLists, setSentenceLists] = useState([]);
   const [currentSentenceListIds, setCurrentSentenceListIds] = useState([]);
   const [autoPlaying, setAutoPlaying] = useState(false);
+  const [showTooltip, setShowTooltip] = useState(false);
+  const [processing, setProcessing] = useState(false);
 
+  const { settings, updateSetting } = useSettings();
   const sessionStart = useRef(new Date().toISOString());
   const roundResults = useRef([]);
   const roundStart = useRef(Date.now());
   const scrollRef = useRef(null);
+
+  // Show tooltip on first visit (only when first sentence loads)
+  useEffect(() => {
+    if (settings && !settings.onboardingPractice && sentence && !loading) {
+      setShowTooltip(true);
+    }
+  }, [settings, sentence, loading]);
+
+  const handleTooltipComplete = async () => {
+    setShowTooltip(false);
+    await updateSetting('onboardingPractice', true);
+  };
 
   const loadSentence = async (roundNumber = currentRound) => {
     setLoading(true);
@@ -181,7 +218,11 @@ export default function PracticeScreen({ navigation, route, user }) {
       // Delay to let UI settle and show blue glow
       const timer = setTimeout(async () => {
         try {
-          await speakJapanese(sentence.japanese);
+          const voiceConfig = VOICE_OPTIONS.find(v => v.value === settings.voiceGender);
+          await speakJapanese(sentence.japanese, {
+            voice: voiceConfig?.voice,
+            rate: settings.speechRate,
+          });
         } catch (e) {
           console.error('Auto-play TTS failed:', e);
         } finally {
@@ -230,62 +271,76 @@ export default function PracticeScreen({ navigation, route, user }) {
   };
 
   const handleMatch = async (grade, userInput) => {
-    const elapsed = Date.now() - roundStart.current;
-    roundResults.current.push({
-      round: currentRound,
-      skipped: false,
-      timeMs: elapsed,
-      sentence,
-      grade, // ○, △, or ×
-      userInput, // What the user actually typed
-    });
+    if (processing) return; // Prevent double-tap
+    setProcessing(true);
 
-    if (user?.id) {
-      await recordCompletion({
-        userId: user.id,
-        sentenceId: sentence?.id,
-        words: sentence?.words,
-        attempts: attempts + 1,
-        grade, // Pass grade to progress service
-        jlptLevel: sentence?.jlpt_level, // Pass sentence JLPT level for kanji tracking
+    try {
+      const elapsed = Date.now() - roundStart.current;
+      roundResults.current.push({
+        round: currentRound,
+        skipped: false,
+        timeMs: elapsed,
+        sentence,
+        grade, // ○, △, or ×
+        userInput, // What the user actually typed
       });
-    }
 
-    if (currentRound >= totalRounds) {
-      setDone(true);
-      finishSession(roundResults.current);
-    } else {
-      const nextRound = currentRound + 1;
-      setCurrentRound(nextRound);
-      loadSentence(nextRound);
+      if (user?.id) {
+        await recordCompletion({
+          userId: user.id,
+          sentenceId: sentence?.id,
+          words: sentence?.words,
+          attempts: attempts + 1,
+          grade, // Pass grade to progress service
+          jlptLevel: sentence?.jlpt_level, // Pass sentence JLPT level for kanji tracking
+        });
+      }
+
+      if (currentRound >= totalRounds) {
+        setDone(true);
+        finishSession(roundResults.current);
+      } else {
+        const nextRound = currentRound + 1;
+        setCurrentRound(nextRound);
+        loadSentence(nextRound);
+      }
+    } finally {
+      setProcessing(false);
     }
   };
 
   const handleSkip = async () => {
-    const elapsed = Date.now() - roundStart.current;
-    roundResults.current.push({
-      round: currentRound,
-      skipped: true,
-      timeMs: elapsed,
-      sentence,
-      grade: '×', // Skip = × (batsu)
-    });
+    if (processing) return; // Prevent double-tap
+    setProcessing(true);
 
-    if (user?.id && sentence?.words) {
-      await recordSkip({
-        userId: user.id,
-        words: sentence.words,
-        jlptLevel: sentence?.jlpt_level, // Pass sentence JLPT level for kanji tracking
+    try {
+      const elapsed = Date.now() - roundStart.current;
+      roundResults.current.push({
+        round: currentRound,
+        skipped: true,
+        timeMs: elapsed,
+        sentence,
+        grade: '×', // Skip = × (batsu)
       });
-    }
 
-    if (currentRound >= totalRounds) {
-      setDone(true);
-      finishSession(roundResults.current);
-    } else {
-      const nextRound = currentRound + 1;
-      setCurrentRound(nextRound);
-      loadSentence(nextRound);
+      if (user?.id && sentence?.words) {
+        await recordSkip({
+          userId: user.id,
+          words: sentence.words,
+          jlptLevel: sentence?.jlpt_level, // Pass sentence JLPT level for kanji tracking
+        });
+      }
+
+      if (currentRound >= totalRounds) {
+        setDone(true);
+        finishSession(roundResults.current);
+      } else {
+        const nextRound = currentRound + 1;
+        setCurrentRound(nextRound);
+        loadSentence(nextRound);
+      }
+    } finally {
+      setProcessing(false);
     }
   };
 
@@ -440,13 +495,27 @@ export default function PracticeScreen({ navigation, route, user }) {
                   setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100)
                 }
               />
-              <TouchableOpacity style={styles.skipButton} onPress={handleSkip} activeOpacity={0.7}>
-                <Text style={styles.skipText}>Skip →</Text>
+              <TouchableOpacity
+                style={[styles.skipButton, processing && styles.skipButtonDisabled]}
+                onPress={handleSkip}
+                activeOpacity={0.7}
+                disabled={processing}
+              >
+                <Text style={[styles.skipText, processing && styles.skipTextDisabled]}>
+                  {processing ? 'Loading...' : 'Skip →'}
+                </Text>
               </TouchableOpacity>
             </>
           )}
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* First-time onboarding tooltip */}
+      <OnboardingTooltip
+        visible={showTooltip}
+        cards={PRACTICE_ONBOARDING_CARDS}
+        onComplete={handleTooltipComplete}
+      />
     </SafeAreaView>
   );
 }
@@ -482,7 +551,9 @@ const styles = StyleSheet.create({
   },
   retryText: { color: '#EFEFEF', fontSize: 14 },
   skipButton: { marginTop: 20, alignItems: 'center', paddingVertical: 8 },
+  skipButtonDisabled: { opacity: 0.5 },
   skipText: { color: '#555', fontSize: 13, letterSpacing: 0.5 },
+  skipTextDisabled: { color: '#333' },
 
   // Modal styles
   modalOverlay: {

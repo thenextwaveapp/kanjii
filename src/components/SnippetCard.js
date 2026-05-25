@@ -12,21 +12,10 @@ import { speakJapanese, stopSpeaking } from '../services/tts';
 import { useSettings } from '../contexts/SettingsContext';
 import { VOICE_OPTIONS } from '../services/settings';
 
-function toHepburn(kana) {
-  let r = toRomaji(kana)
-    // Particles
-    .replace(/\bha\b/g, 'wa')
-    .replace(/\bhe\b/g, 'e')
-    // n before vowels/y gets apostrophe
-    .replace(/n([aeiouāīūēōy])/g, "n'$1")
-    // Long vowels → macrons
-    .replace(/ou/g, 'ō')
-    .replace(/oo/g, 'ō')
-    .replace(/uu/g, 'ū')
-    .replace(/aa/g, 'ā')
-    .replace(/ee/g, 'ē')
-    .replace(/ii/g, 'ii'); // ii stays as ii in Hepburn
-  return r;
+function toIMERomaji(kana) {
+  // Use wanakana's standard IME-compatible romanization
+  // This matches what users would actually type on a Japanese keyboard
+  return toRomaji(kana);
 }
 
 export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [], onSaveToList, sentenceListIds = [], autoPlaying = false }) {
@@ -100,14 +89,14 @@ export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [],
   console.log('WordMap:', wordMap);
   console.log('Japanese text:', japanese);
 
-  // Build romaji: substitute furigana for kanji words, convert kana to Hepburn, add spaces
+  // Build romaji: convert each word segment to romaji and join with spaces
   const romaji = tokenise(japanese, wordMap)
     .map((seg) => {
       const reading = wordMap[seg.text]?.furigana ?? seg.text;
-      return toHepburn(reading);
+      return toIMERomaji(reading);
     })
-    .join(' ')
-    .replace(/\s+([。、！？.,!?])/g, '$1')
+    .join(' ')  // Add spaces between words
+    .replace(/\s+([。、！？.,!?])/g, '$1')  // Remove space before punctuation
     .trim()
     .replace(/^./, (c) => c.toUpperCase());
 
@@ -136,7 +125,7 @@ export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [],
         </Text>
       </View>
 
-      {/* Top right info button */}
+      {/* Top right detail button */}
       {onViewDetail && (
         <View style={styles.topRightInfo}>
           <TouchableOpacity
@@ -144,7 +133,7 @@ export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [],
             onPress={onViewDetail}
             activeOpacity={0.7}
           >
-            <Text style={styles.detailIcon}>ⓘ</Text>
+            <Text style={styles.detailIcon}>···</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -242,38 +231,34 @@ export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [],
         )}
 
       {/* Japanese text with tappable words - modular paired layout */}
-      <View style={[styles.wordsGrid, showTranslation && styles.wordsGridSpaced]}>
+      <View style={styles.wordsGrid}>
         {segments.map((seg, i) => {
           const info = wordMap[seg.text];
           const isRevealed = revealed[seg.text];
+          // Only make words with kanji or katakana tappable (pure hiragana doesn't need furigana)
+          const hasKanjiOrKatakana = /[\u4E00-\u9FFF\u3400-\u4DBF\u30A0-\u30FF]/.test(seg.text);
+          const isTappable = info && hasKanjiOrKatakana;
 
           return (
             <TouchableOpacity
               key={i}
-              onPress={() => info && toggleWord(seg.text)}
+              onPress={() => isTappable && toggleWord(seg.text)}
               style={styles.wordModule}
-              activeOpacity={info ? 0.7 : 1}
-              disabled={!info}
+              activeOpacity={isTappable ? 0.7 : 1}
+              disabled={!isTappable}
             >
               {/* Furigana */}
-              {isRevealed && info && (
+              {isRevealed && isTappable && (
                 <Text style={styles.furiganaAligned}>{info.furigana}</Text>
               )}
 
               {/* Japanese word */}
               <Text style={[
-                info ? styles.kanjiText : styles.plainText,
-                isRevealed && info && styles.kanjiHighlighted
+                isTappable ? styles.kanjiText : styles.plainText,
+                isRevealed && isTappable && styles.kanjiHighlighted
               ]}>
                 {seg.text}
               </Text>
-
-              {/* Translation/Romaji below */}
-              {info && showTranslation && (
-                <Text style={showRomaji ? styles.romajiAligned : styles.meaningAligned}>
-                  {showRomaji ? toHepburn(info.furigana) : info.meaning}
-                </Text>
-              )}
             </TouchableOpacity>
           );
         })}

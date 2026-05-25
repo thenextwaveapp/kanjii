@@ -238,10 +238,7 @@ export default function SummaryScreen({ navigation, route, user }) {
 
         <TouchableOpacity
           style={styles.secondaryButton}
-          onPress={() => navigation.reset({
-            index: 1,
-            routes: [{ name: 'Home' }, { name: 'CollectionList' }],
-          })}
+          onPress={() => navigation.goBack()}
           activeOpacity={0.7}
         >
           <Text style={styles.secondaryButtonText}>Back to Lessons</Text>
