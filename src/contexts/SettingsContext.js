@@ -11,6 +11,11 @@ const DEFAULT_SETTINGS = {
   notificationsEnabled: false,
   dailyReminderHour: 19,
   dailyReminderMinute: 0,
+  onboardingHome: false,
+  onboardingPractice: false,
+  onboardingStudy: false,
+  onboardingKana: false,
+  onboardingLessons: false,
 };
 
 export function SettingsProvider({ children }) {
@@ -69,10 +74,8 @@ export function SettingsProvider({ children }) {
     if (updated) setSettings(updated);
   };
 
-  if (loading) return null;
-
   return (
-    <SettingsContext.Provider value={{ settings, updateSetting }}>
+    <SettingsContext.Provider value={{ settings, updateSetting, loading }}>
       {children}
     </SettingsContext.Provider>
   );

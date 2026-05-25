@@ -25,6 +25,7 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
   const [loading, setLoading] = useState(true);
   const [showStrokeOrder, setShowStrokeOrder] = useState(false);
   const [playingReading, setPlayingReading] = useState(null);
+  const [playingSentenceId, setPlayingSentenceId] = useState(null);
   const [currentSound, setCurrentSound] = useState(null);
   const [showAllReadings, setShowAllReadings] = useState(false);
   const pulseAnim = useRef(new Animated.Value(0)).current;
@@ -41,6 +42,20 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
   const kd = data?.kanjiData;
   const sentences = data?.sentences || [];
   const exampleSentences = data?.exampleSentences || [];
+
+  // Deduplicate readings and example words
+  const uniqueDictReadings = kd?.dictReadings ?
+    [...new Set(kd.dictReadings.map(r => toHiragana(r)))].map(r => r) : [];
+
+  const seenReadings = new Set(uniqueDictReadings);
+  const uniqueExampleWords = kd?.exampleWords ?
+    kd.exampleWords.filter((w, i, arr) => {
+      // Remove if furigana already in dictionary readings
+      if (seenReadings.has(w.furigana)) return false;
+      // Remove if duplicate word
+      const firstIndex = arr.findIndex(x => x.word === w.word);
+      return firstIndex === i;
+    }) : [];
 
   const drillThis = () => {
     navigation.navigate('Practice', {
@@ -60,6 +75,23 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
 
   const viewSentenceDetail = (sentence) => {
     navigation.navigate('SentenceDetail', { sentence });
+  };
+
+  // Get specific meaning for a reading from readings_structured
+  const getReadingMeaning = (hiraganaReading) => {
+    if (!kd?.readings_structured) {
+      // Fallback to shared meanings if readings_structured not available
+      return kd?.dictMeanings?.slice(0, 2).join(', ');
+    }
+
+    const allReadings = [
+      ...(kd.readings_structured.onyomi || []),
+      ...(kd.readings_structured.kunyomi || []),
+      ...(kd.readings_structured.nanori || []),
+    ];
+
+    const match = allReadings.find(r => toHiragana(r.reading) === hiraganaReading);
+    return match?.meaning || kd?.dictMeanings?.slice(0, 2).join(', ');
   };
 
   const handleReadingLongPress = async (reading) => {
@@ -94,6 +126,42 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
       console.error('TTS error:', error);
       stopPulseAnimation(pulseAnimationRef.current, pulseAnim);
       setPlayingReading(null);
+      setCurrentSound(null);
+    }
+  };
+
+  const handleSentenceLongPress = async (sentence) => {
+    // Stop current sound if playing
+    if (currentSound) {
+      await stopSpeaking(currentSound);
+      setCurrentSound(null);
+      setPlayingSentenceId(null);
+      stopPulseAnimation(pulseAnimationRef.current, pulseAnim);
+    }
+
+    try {
+      setPlayingSentenceId(sentence.id);
+      pulseAnimationRef.current = startPulseAnimation(pulseAnim);
+
+      const voiceConfig = VOICE_OPTIONS.find(v => v.value === settings.voiceGender);
+      const sound = await speakJapanese(sentence.japanese, {
+        voice: voiceConfig?.voice,
+        rate: settings.speechRate,
+      });
+
+      setCurrentSound(sound);
+
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (status.didJustFinish) {
+          stopPulseAnimation(pulseAnimationRef.current, pulseAnim);
+          setPlayingSentenceId(null);
+          setCurrentSound(null);
+        }
+      });
+    } catch (error) {
+      console.error('TTS error:', error);
+      stopPulseAnimation(pulseAnimationRef.current, pulseAnim);
+      setPlayingSentenceId(null);
       setCurrentSound(null);
     }
   };
@@ -184,10 +252,10 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
             </View>
 
             {/* Dictionary readings */}
-            {kd?.dictReadings && kd.dictReadings.length > 0 && kd.dictReadings
+            {uniqueDictReadings.length > 0 && uniqueDictReadings
               .slice(0, showAllReadings ? undefined : 4)
               .map((reading, i) => {
-                const hiraganaReading = toHiragana(reading);
+                const hiraganaReading = reading;
                 const isPlaying = playingReading === hiraganaReading;
 
                 const ChipView = isPlaying ? Animated.View : View;
@@ -210,9 +278,9 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
                       <Text style={styles.readingChipKanji}>{kanji}</Text>
                       <Text style={styles.readingChipText}>{hiraganaReading}</Text>
                       <Text style={styles.readingChipRomaji}>{toRomaji(hiraganaReading)}</Text>
-                      {kd.dictMeanings && kd.dictMeanings.length > 0 && (
+                      {getReadingMeaning(hiraganaReading) && (
                         <Text style={styles.readingChipMeaning} numberOfLines={2}>
-                          {kd.dictMeanings.slice(0, 2).join(', ')}
+                          {getReadingMeaning(hiraganaReading)}
                         </Text>
                       )}
                       <Text style={styles.readingChipHint}>🔊</Text>
@@ -222,8 +290,8 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
               })}
 
             {/* Example words */}
-            {kd?.exampleWords && kd.exampleWords.length > 0 && kd.exampleWords
-              .slice(0, showAllReadings ? undefined : Math.max(0, 4 - (kd?.dictReadings?.length || 0)))
+            {uniqueExampleWords.length > 0 && uniqueExampleWords
+              .slice(0, showAllReadings ? undefined : Math.max(0, 4 - uniqueDictReadings.length))
               .map((w, i) => {
                 const isPlaying = playingReading === w.furigana;
 
@@ -257,14 +325,14 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
               })}
 
             {/* Expand button */}
-            {((kd?.dictReadings?.length || 0) + (kd?.exampleWords?.length || 0) > 4) && (
+            {(uniqueDictReadings.length + uniqueExampleWords.length > 4) && (
               <TouchableOpacity
                 style={styles.expandButton}
                 onPress={() => setShowAllReadings(!showAllReadings)}
                 activeOpacity={0.7}
               >
                 <Text style={styles.expandButtonText}>
-                  {showAllReadings ? 'Show less' : `Show ${(kd?.dictReadings?.length || 0) + (kd?.exampleWords?.length || 0) - 4} more`}
+                  {showAllReadings ? 'Show less' : `Show ${uniqueDictReadings.length + uniqueExampleWords.length - 4} more`}
                 </Text>
               </TouchableOpacity>
             )}
@@ -294,23 +362,40 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
               <Text style={styles.sectionLabel}>
                 Your sentences ({sentences.length})
               </Text>
-              {sentences.map((s, i) => (
-                <TouchableOpacity
-                  key={s.id ?? i}
-                  style={styles.sentenceCard}
-                  onPress={() => viewSentence(s.id)}
-                  activeOpacity={0.8}
-                >
-                  <SentenceWithHighlight sentence={s.japanese} target={kanji} words={s.words} />
-                  <EnglishWithHighlight english={s.english} words={s.words} target={kanji} />
-                  <View style={styles.sentenceFooter}>
-                    {s.attempts > 1 && (
-                      <Text style={styles.sentenceAttempts}>{s.attempts} attempts</Text>
-                    )}
-                    <Text style={styles.practiceHint}>Tap to view →</Text>
-                  </View>
-                </TouchableOpacity>
-              ))}
+              {sentences.map((s, i) => {
+                const isPlaying = playingSentenceId === s.id;
+                const CardView = isPlaying ? Animated.View : View;
+                const animatedStyle = isPlaying ? {
+                  borderColor: pulseAnim.interpolate({
+                    inputRange: [0, 0.5, 1],
+                    outputRange: ['#4A90E2', 'rgba(74, 144, 226, 0.3)', '#4A90E2'],
+                  }),
+                  backgroundColor: 'rgba(74, 144, 226, 0.05)',
+                } : {};
+
+                return (
+                  <TouchableOpacity
+                    key={s.id ?? i}
+                    onPress={() => viewSentenceDetail(s)}
+                    onLongPress={() => handleSentenceLongPress(s)}
+                    delayLongPress={100}
+                    activeOpacity={0.8}
+                  >
+                    <CardView style={[styles.sentenceCard, animatedStyle]}>
+                      <SentenceWithHighlight sentence={s.japanese} target={kanji} words={s.words} />
+                      <EnglishWithHighlight english={s.english} words={s.words} target={kanji} />
+                      <View style={styles.sentenceFooter}>
+                        {s.attempts > 1 && (
+                          <Text style={styles.sentenceAttempts}>{s.attempts} attempts</Text>
+                        )}
+                        <Text style={[styles.practiceHint, isPlaying && styles.practiceHintPlaying]}>
+                          {isPlaying ? '🔊 Playing' : 'Hold to speak · Tap to view →'}
+                        </Text>
+                      </View>
+                    </CardView>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           )}
 
@@ -320,20 +405,37 @@ export default function KanjiDetailScreen({ navigation, route, user }) {
               <Text style={styles.sectionLabel}>
                 Examples ({exampleSentences.length})
               </Text>
-              {exampleSentences.map((s, i) => (
-                <TouchableOpacity
-                  key={s.id ?? i}
-                  style={styles.sentenceCard}
-                  onPress={() => viewSentenceDetail(s)}
-                  activeOpacity={0.8}
-                >
-                  <SentenceWithHighlight sentence={s.japanese} target={kanji} words={s.words} />
-                  <EnglishWithHighlight english={s.english} words={s.words} target={kanji} />
-                  <View style={styles.sentenceFooter}>
-                    <Text style={styles.practiceHint}>Tap to view →</Text>
-                  </View>
-                </TouchableOpacity>
-              ))}
+              {exampleSentences.map((s, i) => {
+                const isPlaying = playingSentenceId === s.id;
+                const CardView = isPlaying ? Animated.View : View;
+                const animatedStyle = isPlaying ? {
+                  borderColor: pulseAnim.interpolate({
+                    inputRange: [0, 0.5, 1],
+                    outputRange: ['#4A90E2', 'rgba(74, 144, 226, 0.3)', '#4A90E2'],
+                  }),
+                  backgroundColor: 'rgba(74, 144, 226, 0.05)',
+                } : {};
+
+                return (
+                  <TouchableOpacity
+                    key={s.id ?? i}
+                    onPress={() => viewSentenceDetail(s)}
+                    onLongPress={() => handleSentenceLongPress(s)}
+                    delayLongPress={100}
+                    activeOpacity={0.8}
+                  >
+                    <CardView style={[styles.sentenceCard, animatedStyle]}>
+                      <SentenceWithHighlight sentence={s.japanese} target={kanji} words={s.words} />
+                      <EnglishWithHighlight english={s.english} words={s.words} target={kanji} />
+                      <View style={styles.sentenceFooter}>
+                        <Text style={[styles.practiceHint, isPlaying && styles.practiceHintPlaying]}>
+                          {isPlaying ? '🔊 Playing' : 'Hold to speak · Tap to view →'}
+                        </Text>
+                      </View>
+                    </CardView>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           )}
 
@@ -651,6 +753,7 @@ const styles = StyleSheet.create({
   },
   sentenceAttempts: { color: '#333', fontSize: 11 },
   practiceHint: { color: '#666', fontSize: 12, fontWeight: '600' },
+  practiceHintPlaying: { color: '#4A90E2' },
   noSentences: { alignItems: 'center', paddingVertical: 24 },
   noSentencesText: { color: '#444', fontSize: 13, textAlign: 'center' },
   modalOverlay: {

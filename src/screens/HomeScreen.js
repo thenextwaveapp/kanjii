@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,16 +9,51 @@ import {
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { fetchStats } from '../services/progress';
+import { useSettings } from '../contexts/SettingsContext';
 import FallingCharacters from '../components/FallingCharacters';
+import OnboardingTooltip from '../components/OnboardingTooltip';
+
+const HOME_ONBOARDING_CARDS = [
+  {
+    title: 'Welcome to Kanjii! 👋',
+    description: 'Learn Japanese by typing real sentences. Each sentence teaches you new kanji and vocabulary in context.',
+  },
+  {
+    title: 'Master the Basics 📚',
+    description: 'New to Japanese? Start with Basics to learn hiragana, katakana, and how the writing system works.',
+  },
+  {
+    title: 'Review Anytime 漢',
+    description: 'Use Study mode to review your kanji collection without typing. Perfect for quick refreshers!',
+  },
+  {
+    title: 'Start Practicing ✏️',
+    description: 'Tap Practice to start earning kanji and building fluency. Each sentence you type teaches you new characters!',
+  },
+];
 
 export default function HomeScreen({ navigation, user }) {
   const [stats, setStats] = useState(null);
+  const [showTooltip, setShowTooltip] = useState(false);
+  const { settings, updateSetting } = useSettings();
 
   useFocusEffect(
     useCallback(() => {
       if (user?.id) fetchStats(user.id).then(setStats);
     }, [user?.id])
   );
+
+  // Show tooltip on first visit
+  useEffect(() => {
+    if (settings && !settings.onboardingHome) {
+      setShowTooltip(true);
+    }
+  }, [settings]);
+
+  const handleTooltipComplete = async () => {
+    setShowTooltip(false);
+    await updateSetting('onboardingHome', true);
+  };
 
   const name = user?.user_metadata?.full_name?.split(' ')[0] || 'there';
 
@@ -95,6 +130,13 @@ export default function HomeScreen({ navigation, user }) {
           <Text style={styles.secondaryCardSub}>Learn hiragana, katakana & how Japanese works</Text>
         </TouchableOpacity>
       </View>
+
+      {/* First-time onboarding tooltip */}
+      <OnboardingTooltip
+        visible={showTooltip}
+        cards={HOME_ONBOARDING_CARDS}
+        onComplete={handleTooltipComplete}
+      />
     </SafeAreaView>
   );
 }

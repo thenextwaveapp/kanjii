@@ -7,6 +7,11 @@ const DEFAULT_SETTINGS = {
   notificationsEnabled: false,
   dailyReminderHour: 19, // 7 PM
   dailyReminderMinute: 0,
+  onboardingHome: false,
+  onboardingPractice: false,
+  onboardingStudy: false,
+  onboardingKana: false,
+  onboardingLessons: false,
 };
 
 /**
@@ -49,6 +54,11 @@ export async function getSettings(userId) {
       notificationsEnabled: data.notifications_enabled,
       dailyReminderHour: data.daily_reminder_hour,
       dailyReminderMinute: data.daily_reminder_minute,
+      onboardingHome: data.onboarding_home ?? false,
+      onboardingPractice: data.onboarding_practice ?? false,
+      onboardingStudy: data.onboarding_study ?? false,
+      onboardingKana: data.onboarding_kana ?? false,
+      onboardingLessons: data.onboarding_lessons ?? false,
     };
   } catch (error) {
     console.error('Error loading settings:', error);
@@ -78,6 +88,11 @@ export async function saveSetting(userId, key, value) {
       notificationsEnabled: 'notifications_enabled',
       dailyReminderHour: 'daily_reminder_hour',
       dailyReminderMinute: 'daily_reminder_minute',
+      onboardingHome: 'onboarding_home',
+      onboardingPractice: 'onboarding_practice',
+      onboardingStudy: 'onboarding_study',
+      onboardingKana: 'onboarding_kana',
+      onboardingLessons: 'onboarding_lessons',
     };
 
     const dbColumn = columnMap[key];

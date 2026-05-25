@@ -11,6 +11,7 @@ import { supabase } from '../services/supabase';
 import { fetchSentenceLists } from '../services/sentenceLists';
 
 const ROUND_OPTIONS = [
+  { key: 'all', label: 'All available', sub: 'Every sentence' },
   { key: '5', label: '5 rounds', sub: 'Quick session' },
   { key: '10', label: '10 rounds', sub: 'Standard' },
   { key: '15', label: '15 rounds', sub: 'Extended' },
@@ -265,19 +266,20 @@ export default function RoundSelectScreen({ navigation, route }) {
 
   const start = () => {
     const finalDomain = subtopic || domain;
+    const roundCount = rounds === 'all' ? 9999 : parseInt(rounds);
 
     // Check if a list is selected
     if (finalDomain.startsWith('list:')) {
       const listId = finalDomain.replace('list:', '');
       const list = userLists.find(l => l.id === listId);
       navigation.navigate('Practice', {
-        rounds: parseInt(rounds),
+        rounds: roundCount,
         listId,
         listName: list?.name,
       });
     } else {
       navigation.navigate('Practice', {
-        rounds: parseInt(rounds),
+        rounds: roundCount,
         difficulty,
         domain: finalDomain,
       });

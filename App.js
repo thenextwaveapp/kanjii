@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,16 +8,17 @@ import {
   SafeAreaView,
   Linking,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
 
-import { SettingsProvider } from './src/contexts/SettingsContext';
+import { SettingsProvider, useSettings } from './src/contexts/SettingsContext';
 import HomeScreen from './src/screens/HomeScreen';
+import UserProfileScreen from './src/screens/UserProfileScreen';
 import ModeSelectScreen from './src/screens/ModeSelectScreen';
 import RoundSelectScreen from './src/screens/RoundSelectScreen';
 import CollectionListScreen from './src/screens/CollectionListScreen';
-import LessonListScreen from './src/screens/LessonListScreen';
 import PracticeScreen from './src/screens/PracticeScreen';
 import SummaryScreen from './src/screens/SummaryScreen';
 import KanaPracticeSummary from './src/screens/KanaPracticeSummary';
@@ -28,18 +29,43 @@ import SentenceDetailScreen from './src/screens/SentenceDetailScreen';
 import LearnScreen from './src/screens/LearnScreen';
 import { onAuthStateChange, signInWithGoogle } from './src/services/auth';
 import { supabase } from './src/services/supabase';
+import { isProfileCompleted } from './src/services/profile';
 
 const Stack = createNativeStackNavigator();
+
+const NAVIGATION_STATE_KEY = '@navigation_state';
 
 export default function App() {
   const [user, setUser] = useState(undefined);
   const [signingIn, setSigningIn] = useState(false);
   const [authError, setAuthError] = useState(null);
+  const [isNavigationReady, setIsNavigationReady] = useState(false);
+  const [initialNavigationState, setInitialNavigationState] = useState();
+  const routeNameRef = useRef();
 
   useEffect(() => {
     const unsub = onAuthStateChange(setUser);
     return unsub;
   }, []);
+
+  // Restore navigation state
+  useEffect(() => {
+    const restoreState = async () => {
+      try {
+        const savedStateString = await AsyncStorage.getItem(NAVIGATION_STATE_KEY);
+        const state = savedStateString ? JSON.parse(savedStateString) : undefined;
+        setInitialNavigationState(state);
+      } catch (e) {
+        console.warn('Failed to restore navigation state:', e);
+      } finally {
+        setIsNavigationReady(true);
+      }
+    };
+
+    if (!isNavigationReady) {
+      restoreState();
+    }
+  }, [isNavigationReady]);
 
   useEffect(() => {
     const handleDeepLink = async ({ url }) => {
@@ -119,23 +145,81 @@ export default function App() {
   }
 
   // Signed in - show app
+  if (!isNavigationReady) {
+    return (
+      <View style={styles.center}>
+        <StatusBar style="light" />
+        <ActivityIndicator color="#E85D3A" size="large" />
+      </View>
+    );
+  }
+
   return (
     <SettingsProvider>
-      <NavigationContainer>
+      <AppNavigator user={user} initialNavigationState={initialNavigationState} />
+    </SettingsProvider>
+  );
+}
+
+// Wrapper component to check profile completion and route accordingly
+function AppNavigator({ user, initialNavigationState }) {
+  const [checkingProfile, setCheckingProfile] = useState(true);
+  const [initialRoute, setInitialRoute] = useState('Home');
+  const [navState, setNavState] = useState(initialNavigationState);
+
+  useEffect(() => {
+    async function checkProfile() {
+      if (user?.id) {
+        console.log('Checking profile for user:', user.id);
+        const completed = await isProfileCompleted(user.id);
+        console.log('Profile completed:', completed);
+        const route = completed ? 'Home' : 'UserProfile';
+        console.log('Setting initial route to:', route);
+        setInitialRoute(route);
+
+        // Clear navigation state if profile not completed
+        // This ensures UserProfile screen shows instead of restored state
+        if (!completed) {
+          console.log('Clearing navigation state for profile setup');
+          setNavState(undefined);
+        }
+      }
+      setCheckingProfile(false);
+    }
+    checkProfile();
+  }, [user?.id]);
+
+  if (checkingProfile) {
+    return (
+      <View style={styles.center}>
         <StatusBar style="light" />
-        <Stack.Navigator
-          screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#0A0A0A' } }}
-        >
-          <Stack.Screen name="Home">
-            {(props) => <HomeScreen {...props} user={user} />}
-          </Stack.Screen>
+        <ActivityIndicator color="#E85D3A" size="large" />
+      </View>
+    );
+  }
+
+  return (
+    <NavigationContainer
+      initialState={navState}
+      onStateChange={(state) => {
+        AsyncStorage.setItem(NAVIGATION_STATE_KEY, JSON.stringify(state));
+      }}
+    >
+      <StatusBar style="light" />
+      <Stack.Navigator
+        initialRouteName={initialRoute}
+        screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#0A0A0A' } }}
+      >
+        <Stack.Screen name="UserProfile">
+          {(props) => <UserProfileScreen {...props} user={user} />}
+        </Stack.Screen>
+        <Stack.Screen name="Home">
+          {(props) => <HomeScreen {...props} user={user} />}
+        </Stack.Screen>
           <Stack.Screen name="ModeSelect" component={ModeSelectScreen} />
           <Stack.Screen name="RoundSelect" component={RoundSelectScreen} />
           <Stack.Screen name="CollectionList">
             {(props) => <CollectionListScreen {...props} user={user} />}
-          </Stack.Screen>
-          <Stack.Screen name="LessonList">
-            {(props) => <LessonListScreen {...props} user={user} />}
           </Stack.Screen>
           <Stack.Screen name="Practice">
             {(props) => <PracticeScreen {...props} user={user} />}
@@ -181,8 +265,7 @@ export default function App() {
           </Stack.Screen>
         </Stack.Navigator>
       </NavigationContainer>
-    </SettingsProvider>
-  );
+    );
 }
 
 const styles = StyleSheet.create({
