@@ -14,6 +14,7 @@ import {
   Keyboard,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { toRomaji } from 'wanakana';
 import { fetchCollections, getCollectionProgress, fetchLessons } from '../services/collections';
@@ -93,7 +94,7 @@ function highlightText(text, searchTerm) {
 export default function CollectionListScreen({ navigation, user }) {
   const [collections, setCollections] = useState([]);
   const [progress, setProgress] = useState({});
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [expandedId, setExpandedId] = useState(null);
   const [lessons, setLessons] = useState({});
@@ -164,25 +165,23 @@ export default function CollectionListScreen({ navigation, user }) {
   }, [currentIndex, expandedId, collections]);
 
   const loadCollections = async () => {
-    setLoading(true);
     try {
       const data = await fetchCollections();
       setCollections(data);
 
+      // Load progress asynchronously in background (non-blocking)
       if (user?.id) {
-        const progressData = {};
-        await Promise.all(
-          data.map(async (collection) => {
+        data.forEach(async (collection) => {
+          try {
             const prog = await getCollectionProgress(collection.id, user.id);
-            progressData[collection.id] = prog;
-          })
-        );
-        setProgress(progressData);
+            setProgress(prev => ({ ...prev, [collection.id]: prog }));
+          } catch (error) {
+            console.error(`Error loading progress for ${collection.id}:`, error);
+          }
+        });
       }
     } catch (error) {
       console.error('Error loading collections:', error);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -624,19 +623,39 @@ export default function CollectionListScreen({ navigation, user }) {
       </View>
 
       <View style={styles.titleContainer}>
-        <Text style={styles.title}>Structured Lessons</Text>
-
         {!searchActive ? (
-          <View style={styles.subtitleRow}>
-            <Text style={styles.subtitle}>Swipe to explore • Tap to expand</Text>
-            <TouchableOpacity
-              style={styles.searchIcon}
-              onPress={handleSearchOpen}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <Text style={styles.searchIconText}>🔍</Text>
-            </TouchableOpacity>
-          </View>
+          <>
+            {/* Overall progress bar */}
+            {(() => {
+              const totalLessons = collections.reduce((sum, c) => sum + (c.lessonCount || 0), 0);
+              const completedLessons = Object.values(progress).reduce((sum, p) => sum + (p.completedLessons || 0), 0);
+              const overallPercentage = totalLessons > 0 ? (completedLessons / totalLessons) * 100 : 0;
+
+              return (
+                <>
+                  <View style={styles.progressBarContainer}>
+                    <View style={styles.progressBarBackground}>
+                      <View style={[styles.progressBarFill, { width: `${overallPercentage}%` }]} />
+                    </View>
+                    <Text style={styles.progressText}>
+                      {completedLessons}/{totalLessons} lessons
+                    </Text>
+                  </View>
+                </>
+              );
+            })()}
+
+            <View style={styles.subtitleRow}>
+              <Text style={styles.subtitle}>Swipe to explore • Tap to expand</Text>
+              <TouchableOpacity
+                style={styles.searchIcon}
+                onPress={handleSearchOpen}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="search" size={18} color="#666" />
+              </TouchableOpacity>
+            </View>
+          </>
         ) : (
           <View style={styles.searchContainer}>
             <TextInput
@@ -673,7 +692,7 @@ export default function CollectionListScreen({ navigation, user }) {
               </View>
             ) : searchQuery.trim() === '' ? (
               <View style={styles.searchEmptyContainer}>
-                <Text style={styles.searchEmptyIcon}>🔍</Text>
+                <Ionicons name="search-outline" size={48} color="#333" style={{ marginBottom: 8 }} />
                 <Text style={styles.searchEmptyText}>
                   Search for words or phrases in sentences
                 </Text>
@@ -683,7 +702,7 @@ export default function CollectionListScreen({ navigation, user }) {
               </View>
             ) : searchResults.length === 0 ? (
               <View style={styles.searchEmptyContainer}>
-                <Text style={styles.searchEmptyIcon}>📭</Text>
+                <Ionicons name="alert-circle-outline" size={48} color="#333" style={{ marginBottom: 8 }} />
                 <Text style={styles.searchEmptyText}>No results found</Text>
                 <Text style={styles.searchEmptyHint}>
                   Try a different search term
@@ -875,14 +894,27 @@ const styles = StyleSheet.create({
   },
   titleContainer: {
     paddingHorizontal: 24,
-    paddingBottom: 20,
+    paddingBottom: 16,
   },
-  title: {
-    color: '#EFEFEF',
-    fontSize: 28,
-    fontWeight: '900',
-    letterSpacing: -0.5,
-    marginBottom: 6,
+  progressBarContainer: {
+    marginBottom: 12,
+  },
+  progressBarBackground: {
+    height: 8,
+    backgroundColor: '#1A1A1A',
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#E85D3A',
+    borderRadius: 4,
+  },
+  progressText: {
+    color: '#888',
+    fontSize: 13,
+    fontWeight: '600',
   },
   subtitle: {
     color: '#888',
@@ -896,10 +928,6 @@ const styles = StyleSheet.create({
   },
   searchIcon: {
     padding: 4,
-  },
-  searchIconText: {
-    fontSize: 18,
-    color: '#888',
   },
   searchContainer: {
     flexDirection: 'row',
@@ -947,10 +975,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingTop: 80,
     gap: 12,
-  },
-  searchEmptyIcon: {
-    fontSize: 48,
-    marginBottom: 8,
   },
   searchEmptyText: {
     color: '#888',

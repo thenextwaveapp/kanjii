@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   Image,
   SafeAreaView,
+  Animated,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { fetchStats } from '../services/progress';
@@ -35,6 +36,8 @@ const HOME_ONBOARDING_CARDS = [
 export default function HomeScreen({ navigation, user }) {
   const [stats, setStats] = useState(null);
   const [showTooltip, setShowTooltip] = useState(false);
+  const [isFlipped, setIsFlipped] = useState(false);
+  const flipAnim = useRef(new Animated.Value(0)).current;
   const { settings, updateSetting } = useSettings();
 
   useFocusEffect(
@@ -42,6 +45,35 @@ export default function HomeScreen({ navigation, user }) {
       if (user?.id) fetchStats(user.id).then(setStats);
     }, [user?.id])
   );
+
+  useEffect(() => {
+    Animated.spring(flipAnim, {
+      toValue: isFlipped ? 180 : 0,
+      friction: 8,
+      tension: 10,
+      useNativeDriver: true,
+    }).start();
+  }, [isFlipped]);
+
+  const frontInterpolate = flipAnim.interpolate({
+    inputRange: [0, 180],
+    outputRange: ['0deg', '180deg'],
+  });
+
+  const backInterpolate = flipAnim.interpolate({
+    inputRange: [0, 180],
+    outputRange: ['180deg', '360deg'],
+  });
+
+  const frontOpacity = flipAnim.interpolate({
+    inputRange: [0, 90, 90.01, 180],
+    outputRange: [1, 1, 0, 0],
+  });
+
+  const backOpacity = flipAnim.interpolate({
+    inputRange: [0, 89.99, 90, 180],
+    outputRange: [0, 0, 1, 1],
+  });
 
   // Show tooltip on first visit
   useEffect(() => {
@@ -53,6 +85,17 @@ export default function HomeScreen({ navigation, user }) {
   const handleTooltipComplete = async () => {
     setShowTooltip(false);
     await updateSetting('onboardingHome', true);
+  };
+
+  const handleQuickPlay = async () => {
+    if (!user?.id) return;
+
+    navigation.navigate('Practice', {
+      user,
+      quickPlayMode: true,
+      rounds: 999, // Effectively infinite until user exits
+      title: 'Quick Play',
+    });
   };
 
   const name = user?.user_metadata?.full_name?.split(' ')[0] || 'there';
@@ -100,15 +143,94 @@ export default function HomeScreen({ navigation, user }) {
 
       {/* Main actions */}
       <View style={styles.actions}>
-        <TouchableOpacity
-          style={styles.primaryCard}
-          onPress={() => navigation.navigate('ModeSelect', { user })}
-          activeOpacity={0.85}
-        >
-          <Text style={styles.primaryCardIcon}>✏️</Text>
-          <Text style={styles.primaryCardTitle}>Practice</Text>
-          <Text style={styles.primaryCardSub}>Type Japanese sentences to earn kanji</Text>
-        </TouchableOpacity>
+        {/* Tap outside overlay */}
+        {isFlipped && (
+          <TouchableOpacity
+            style={styles.overlay}
+            activeOpacity={1}
+            onPress={() => setIsFlipped(false)}
+          />
+        )}
+
+        {/* Flippable Practice Card */}
+        <View style={styles.flipContainer}>
+          {/* Front */}
+          <Animated.View
+            style={[
+              styles.flipSide,
+              {
+                transform: [{ rotateX: frontInterpolate }],
+                opacity: frontOpacity,
+              },
+            ]}
+          >
+            <TouchableOpacity
+              style={styles.primaryCard}
+              onPress={() => setIsFlipped(true)}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.primaryCardIcon}>✏️</Text>
+              <Text style={styles.primaryCardTitle}>Practice</Text>
+              <Text style={styles.primaryCardSub}>Type Japanese sentences to earn kanji</Text>
+            </TouchableOpacity>
+          </Animated.View>
+
+          {/* Back */}
+          <Animated.View
+            style={[
+              styles.flipSide,
+              styles.flipBack,
+              {
+                transform: [{ rotateX: backInterpolate }],
+                opacity: backOpacity,
+              },
+            ]}
+          >
+            <View style={styles.primaryCardBack}>
+              <View style={styles.modeRow}>
+                <TouchableOpacity
+                  style={styles.modeOption}
+                  onPress={() => {
+                    setIsFlipped(false);
+                    navigation.navigate('CollectionList');
+                  }}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.modeEmoji}>📚</Text>
+                  <Text style={styles.modeLabelDark}>Lessons</Text>
+                </TouchableOpacity>
+
+                <View style={styles.verticalDivider} />
+
+                <TouchableOpacity
+                  style={styles.modeOption}
+                  onPress={() => {
+                    setIsFlipped(false);
+                    navigation.navigate('RoundSelect', { user });
+                  }}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.modeEmoji}>✨</Text>
+                  <Text style={styles.modeLabelDark}>Freestyle</Text>
+                </TouchableOpacity>
+
+                <View style={styles.verticalDivider} />
+
+                <TouchableOpacity
+                  style={styles.modeOption}
+                  onPress={() => {
+                    setIsFlipped(false);
+                    handleQuickPlay();
+                  }}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.modeEmoji}>🎯</Text>
+                  <Text style={styles.modeLabelDark}>Quick Play</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Animated.View>
+        </View>
 
         <TouchableOpacity
           style={styles.secondaryCard}
@@ -197,16 +319,77 @@ const styles = StyleSheet.create({
   miniStatValue: { color: '#EFEFEF', fontSize: 22, fontWeight: '700' },
   miniStatLabel: { color: '#555', fontSize: 11, letterSpacing: 0.5, marginTop: 2 },
   statDivider: { width: 1, backgroundColor: '#222', marginVertical: 4 },
-  actions: { paddingHorizontal: 24, gap: 14 },
+  actions: { paddingHorizontal: 24, gap: 14, position: 'relative' },
+  overlay: {
+    position: 'absolute',
+    top: -500,
+    left: -500,
+    right: -500,
+    bottom: -500,
+    zIndex: 1,
+  },
+  flipContainer: {
+    position: 'relative',
+    zIndex: 2,
+  },
+  flipSide: {
+    backfaceVisibility: 'hidden',
+  },
+  flipBack: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
   primaryCard: {
     backgroundColor: '#E85D3A',
     borderRadius: 20,
     padding: 28,
     gap: 6,
   },
+  primaryCardBack: {
+    backgroundColor: '#111',
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#E85D3A',
+    padding: 28,
+    justifyContent: 'center',
+    flex: 1,
+  },
   primaryCardIcon: { fontSize: 28 },
   primaryCardTitle: { color: '#fff', fontSize: 24, fontWeight: '900', letterSpacing: -1 },
   primaryCardSub: { color: 'rgba(255,255,255,0.7)', fontSize: 13 },
+  modeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  modeOption: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 8,
+  },
+  modeEmoji: {
+    fontSize: 32,
+  },
+  modeLabel: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  modeLabelDark: {
+    color: '#EFEFEF',
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  verticalDivider: {
+    width: 1,
+    height: 60,
+    backgroundColor: '#333',
+  },
   secondaryCard: {
     backgroundColor: '#111',
     borderRadius: 20,

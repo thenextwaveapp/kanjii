@@ -130,22 +130,9 @@ export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [],
         </Text>
       </View>
 
-      {/* Top right detail button */}
-      {onViewDetail && (
-        <View style={styles.topRightInfo}>
-          <TouchableOpacity
-            style={styles.iconButton}
-            onPress={onViewDetail}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.detailIcon}>···</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* Bottom left button - save to list */}
-      {onSaveToList && sentenceLists.length > 0 && (
-        <View style={styles.bottomLeftButtons}>
+      {/* Top right buttons - save to list and detail */}
+      <View style={styles.topRightInfo}>
+        {onSaveToList && sentenceLists.length > 0 && (
           <TouchableOpacity
             style={[
               styles.iconButton,
@@ -159,8 +146,18 @@ export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [],
               {isInAnyList ? '✓' : '+'}
             </Text>
           </TouchableOpacity>
-        </View>
-      )}
+        )}
+
+        {onViewDetail && (
+          <TouchableOpacity
+            style={styles.iconButton}
+            onPress={onViewDetail}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.detailIcon}>···</Text>
+          </TouchableOpacity>
+        )}
+      </View>
 
       {/* Bottom right buttons */}
       <View style={styles.topRightButtons}>
@@ -375,11 +372,8 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 8,
     right: 8,
-  },
-  bottomLeftButtons: {
-    position: 'absolute',
-    bottom: 8,
-    left: 8,
+    flexDirection: 'row',
+    gap: 6,
   },
   roEnToggleText: {
     fontSize: 10,

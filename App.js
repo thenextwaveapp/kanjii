@@ -217,11 +217,22 @@ function AppNavigator({ user, initialNavigationState }) {
           {(props) => <HomeScreen {...props} user={user} />}
         </Stack.Screen>
           <Stack.Screen name="ModeSelect" component={ModeSelectScreen} />
-          <Stack.Screen name="RoundSelect" component={RoundSelectScreen} />
+          <Stack.Screen
+            name="RoundSelect"
+            options={{
+              animation: 'slide_from_bottom',
+            }}
+            component={RoundSelectScreen}
+          />
           <Stack.Screen name="CollectionList">
             {(props) => <CollectionListScreen {...props} user={user} />}
           </Stack.Screen>
-          <Stack.Screen name="Practice">
+          <Stack.Screen
+            name="Practice"
+            options={{
+              animation: 'slide_from_bottom',
+            }}
+          >
             {(props) => <PracticeScreen {...props} user={user} />}
           </Stack.Screen>
           <Stack.Screen name="Summary">

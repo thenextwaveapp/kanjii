@@ -58,6 +58,8 @@ export default function SummaryScreen({ navigation, route, user }) {
 
   const allPerfect = results.every(r => r.grade === '○');
   const isComplete = results.length === rounds && (!isLesson || allPerfect);
+  const isQuickPlay = difficulty === 'Quick Play';
+  const isFreestyle = !isLesson && !isQuickPlay && difficulty && difficulty !== 'Quick Play';
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.9)).current;
@@ -218,7 +220,14 @@ export default function SummaryScreen({ navigation, route, user }) {
         <TouchableOpacity
           style={nextLesson && isLesson && isComplete ? styles.secondaryButton : styles.primaryButton}
           onPress={() => {
-            if (isLesson && lessonId) {
+            if (isQuickPlay) {
+              navigation.replace('Practice', {
+                user,
+                quickPlayMode: true,
+                rounds: 999,
+                title: 'Quick Play',
+              });
+            } else if (isLesson && lessonId) {
               navigation.replace('Practice', {
                 lessonId,
                 lessonName,
@@ -238,10 +247,18 @@ export default function SummaryScreen({ navigation, route, user }) {
 
         <TouchableOpacity
           style={styles.secondaryButton}
-          onPress={() => navigation.goBack()}
+          onPress={() => {
+            if (isQuickPlay) {
+              navigation.navigate('Home');
+            } else {
+              navigation.goBack();
+            }
+          }}
           activeOpacity={0.7}
         >
-          <Text style={styles.secondaryButtonText}>Back to Lessons</Text>
+          <Text style={styles.secondaryButtonText}>
+            {isQuickPlay ? 'Back to Home' : isFreestyle ? 'Back to Round Select' : 'Back to Lessons'}
+          </Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>

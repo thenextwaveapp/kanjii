@@ -101,8 +101,9 @@ export default function TypingInput({ target, onMatch, onAttempt, onFocus }) {
 
   const handleCheck = () => {
     const stripEmoji = (s) => s.replace(/\p{Emoji}/gu, '').trim();
-    const normalised = stripEmoji(value);
-    const targetNorm = stripEmoji(target);
+    const stripPunctuation = (s) => s.replace(/[.,!?;:、。！？；：]/g, '').trim();
+    const normalised = stripPunctuation(stripEmoji(value));
+    const targetNorm = stripPunctuation(stripEmoji(target));
 
     const similarity = calculateSimilarity(normalised, targetNorm);
 

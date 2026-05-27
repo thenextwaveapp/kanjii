@@ -116,7 +116,7 @@ export async function fetchListSentences(listId) {
       )
     `)
     .eq('list_id', listId)
-    .order('created_at', { ascending: true });
+    .order('added_at', { ascending: true });
 
   if (error) {
     console.error('Error fetching list sentences:', error);

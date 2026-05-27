@@ -24,26 +24,21 @@ import {
 
 export default function SettingsScreen({ navigation, user }) {
   const { settings, updateSetting } = useSettings();
-  const [testingVoice, setTestingVoice] = useState(false);
   const [hasPermission, setHasPermission] = useState(false);
 
   useEffect(() => {
     checkNotificationPermissions().then(setHasPermission);
   }, []);
 
-  const testVoice = async () => {
-    if (testingVoice) return;
-    setTestingVoice(true);
+  const testVoice = async (voiceValue, rateValue) => {
     try {
-      const voiceConfig = VOICE_OPTIONS.find(v => v.value === settings.voiceGender);
+      const voiceConfig = VOICE_OPTIONS.find(v => v.value === (voiceValue || settings.voiceGender));
       await speakJapanese('こんにちは', {
         voice: voiceConfig?.voice,
-        rate: settings.speechRate,
+        rate: rateValue || settings.speechRate,
       });
     } catch (error) {
       console.error('Voice test error:', error);
-    } finally {
-      setTimeout(() => setTestingVoice(false), 2000);
     }
   };
 
@@ -105,14 +100,17 @@ export default function SettingsScreen({ navigation, user }) {
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Voice</Text>
 
-          <View style={[styles.card, styles.cardWithButton]}>
+          <View style={styles.card}>
             <Text style={styles.compactLabel}>Gender</Text>
             <View style={styles.compactOptions}>
               {VOICE_OPTIONS.map((option) => (
                 <TouchableOpacity
                   key={option.value}
                   style={[styles.compactOption, settings.voiceGender === option.value && styles.compactOptionActive]}
-                  onPress={() => updateSetting('voiceGender', option.value)}
+                  onPress={() => {
+                    updateSetting('voiceGender', option.value);
+                    testVoice(option.value, settings.speechRate);
+                  }}
                   activeOpacity={0.7}
                 >
                   <Text style={[styles.compactOptionText, settings.voiceGender === option.value && styles.compactOptionTextActive]}>
@@ -130,7 +128,10 @@ export default function SettingsScreen({ navigation, user }) {
                 <TouchableOpacity
                   key={option.value}
                   style={[styles.speedOption, settings.speechRate === option.value && styles.speedOptionActive]}
-                  onPress={() => updateSetting('speechRate', option.value)}
+                  onPress={() => {
+                    updateSetting('speechRate', option.value);
+                    testVoice(settings.voiceGender, option.value);
+                  }}
                   activeOpacity={0.7}
                 >
                   <Text style={[styles.speedOptionText, settings.speechRate === option.value && styles.speedOptionTextActive]}>
@@ -139,17 +140,6 @@ export default function SettingsScreen({ navigation, user }) {
                 </TouchableOpacity>
               ))}
             </View>
-
-            <TouchableOpacity
-              style={[styles.testButtonBottomRight, testingVoice && styles.testButtonActive]}
-              onPress={testVoice}
-              disabled={testingVoice}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.testButtonCompactText}>
-                {testingVoice ? '🔊' : '🔊'}
-              </Text>
-            </TouchableOpacity>
           </View>
         </View>
 
@@ -321,9 +311,6 @@ const styles = StyleSheet.create({
     padding: 16,
     position: 'relative',
   },
-  cardWithButton: {
-    paddingBottom: 60,
-  },
   compactLabel: {
     color: '#AAA',
     fontSize: 11,
@@ -356,25 +343,6 @@ const styles = StyleSheet.create({
   },
   compactOptionTextActive: {
     color: '#FFF',
-  },
-  testButtonBottomRight: {
-    position: 'absolute',
-    bottom: 12,
-    right: 12,
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: '#1A1A1A',
-    borderWidth: 1,
-    borderColor: '#333',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  testButtonActive: {
-    opacity: 0.6,
-  },
-  testButtonCompactText: {
-    fontSize: 18,
   },
   divider: {
     height: 1,

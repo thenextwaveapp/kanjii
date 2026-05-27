@@ -131,7 +131,8 @@ export async function fetchLessonSentences(lessonId) {
         english,
         words,
         jlpt_level,
-        domain
+        domain,
+        image_url
       )
     `)
     .eq('lesson_id', lessonId)

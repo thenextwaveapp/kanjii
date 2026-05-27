@@ -107,7 +107,12 @@ export default function RoundSelectScreen({ navigation, route }) {
 
         // Filter topics with at least 10 sentences
         const topics = [
-          ...(lists.length > 0 ? [{ key: 'My Lists', label: 'My Lists', sub: `${lists.length} list${lists.length !== 1 ? 's' : ''}` }] : []),
+          // User's custom lists at the top
+          ...lists.map(list => ({
+            key: `list:${list.id}`,
+            label: list.name,
+            sub: 'My list',
+          })),
           { key: 'Any', label: 'Any topic', sub: 'Surprise me' },
           ...Object.entries(mainTopicCounts)
             .filter(([_, count]) => count >= 10)
@@ -168,16 +173,10 @@ export default function RoundSelectScreen({ navigation, route }) {
       return;
     }
 
-    // Handle My Lists
-    if (domain === 'My Lists') {
-      const listSubtopics = userLists.map(list => ({
-        key: `list:${list.id}`,
-        label: list.name,
-        sub: '', // We could add sentence count here later
-      }));
-
-      setSubtopicOptions(listSubtopics);
-      setSubtopic(listSubtopics[0]?.key || null);
+    // Handle individual user lists
+    if (domain.startsWith('list:')) {
+      setSubtopicOptions([]);
+      setSubtopic(null);
 
       // Set difficulty options to mixed for lists
       setDifficultyOptions([
@@ -291,7 +290,7 @@ export default function RoundSelectScreen({ navigation, route }) {
       <View style={styles.content}>
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.navigate('Home')}>
+          <TouchableOpacity onPress={() => navigation.goBack()}>
             <Text style={styles.backText}>← Back</Text>
           </TouchableOpacity>
           <Text style={styles.logo}>Kanj<Text style={styles.logoAccent}>ii</Text></Text>

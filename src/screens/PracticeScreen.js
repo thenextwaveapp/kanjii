@@ -10,6 +10,7 @@ import {
   Platform,
   SafeAreaView,
   Modal,
+  Image,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import SnippetCard from '../components/SnippetCard';
@@ -20,6 +21,7 @@ import { fetchSentence, fetchTargetedSentence } from '../services/sentences';
 import { recordCompletion, recordSkip } from '../services/progress';
 import { fetchLessonSentences, updateLessonProgress } from '../services/collections';
 import { fetchSentenceLists, addSentenceToList, removeSentenceFromList, getSentenceLists, fetchListSentences } from '../services/sentenceLists';
+import { getQuickPlaySentence } from '../services/quickPlay';
 import { speakJapanese } from '../services/tts';
 import { VOICE_OPTIONS } from '../services/settings';
 
@@ -49,6 +51,7 @@ export default function PracticeScreen({ navigation, route, user }) {
     domain = 'Any',
     reviewKanji = null,   // string[] — drill mode, targeted sentences
     singleSentence = null, // sentence object — one-round re-practice from Study
+    quickPlayMode = false, // boolean — quick play mode, smart sentence selection
     lessonId = null,       // UUID — lesson mode, ordered sentences
     lessonName = null,     // string — lesson name for display
     collectionName = null, // string — collection name for display
@@ -61,6 +64,7 @@ export default function PracticeScreen({ navigation, route, user }) {
   const isList = !!listId;
   const isDrill = !!reviewKanji && reviewKanji.length > 0;
   const isSingle = !!singleSentence;
+  const isQuickPlay = quickPlayMode;
 
   const [lessonSentences, setLessonSentences] = useState([]);
   const [listSentences, setListSentences] = useState([]);
@@ -84,6 +88,7 @@ export default function PracticeScreen({ navigation, route, user }) {
   const roundResults = useRef([]);
   const roundStart = useRef(Date.now());
   const scrollRef = useRef(null);
+  const recentSentenceIds = useRef([]); // Track last 3 sentence IDs for Quick Play
 
   // Show tooltip on first visit (only when first sentence loads)
   useEffect(() => {
@@ -122,6 +127,11 @@ export default function PracticeScreen({ navigation, route, user }) {
         } else {
           throw new Error('No more sentences in this list');
         }
+      } else if (isQuickPlay) {
+        // Quick Play: smart sentence selection based on difficulty progression
+        // Pass recent sentence IDs to avoid repeats (keep 2+ sentences in between)
+        // Pass current round to cycle through the pattern (review/new/challenge)
+        data = await getQuickPlaySentence(user?.id, recentSentenceIds.current, roundNumber);
       } else if (isDrill) {
         data = await fetchTargetedSentence(reviewKanji);
       } else {
@@ -133,6 +143,11 @@ export default function PracticeScreen({ navigation, route, user }) {
       }
 
       setSentence(data);
+
+      // For Quick Play: track recent sentences to avoid immediate repeats
+      if (isQuickPlay && data.id) {
+        recentSentenceIds.current = [...recentSentenceIds.current, data.id].slice(-3);
+      }
     } catch (e) {
       setError(e.message);
     } finally {
@@ -259,8 +274,8 @@ export default function PracticeScreen({ navigation, route, user }) {
     navigation.replace('Summary', {
       results,
       sessionStart: sessionStart.current,
-      rounds: totalRounds,
-      difficulty: isLesson ? lessonName : isDrill ? 'Drill' : difficulty,
+      rounds: isQuickPlay ? results.length : totalRounds,
+      difficulty: isLesson ? lessonName : isQuickPlay ? 'Quick Play' : isDrill ? 'Drill' : difficulty,
       domain: isLesson ? collectionName : isDrill ? 'Weak kanji' : domain,
       isLesson,
       lessonId,
@@ -371,6 +386,8 @@ export default function PracticeScreen({ navigation, route, user }) {
 
   const headerLabel = isSingle
     ? 'Re-practice'
+    : isQuickPlay
+    ? `Round ${currentRound}`
     : isLesson
     ? `${currentRound} / ${totalRounds}`
     : isList
@@ -402,7 +419,9 @@ export default function PracticeScreen({ navigation, route, user }) {
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Save your progress?</Text>
             <Text style={styles.modalMessage}>
-              You've completed {roundResults.current.length} of {totalRounds} rounds
+              {isQuickPlay
+                ? `You've completed ${roundResults.current.length} rounds`
+                : `You've completed ${roundResults.current.length} of ${totalRounds} rounds`}
             </Text>
             <View style={styles.modalButtons}>
               <TouchableOpacity
@@ -477,7 +496,13 @@ export default function PracticeScreen({ navigation, route, user }) {
 
           {sentence && !loading && !done && (
             <>
-              <Text style={styles.instruction}>Tap words to reveal, then type</Text>
+              {sentence.image_url && (
+                <Image
+                  source={{ uri: sentence.image_url }}
+                  style={styles.sentenceImage}
+                  resizeMode="cover"
+                />
+              )}
               <SnippetCard
                 key={sentence.id}
                 snippet={sentence}
@@ -540,6 +565,13 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   content: { padding: 20, paddingBottom: 60 },
   instruction: { fontSize: 12, color: '#444', letterSpacing: 1.5, marginBottom: 16, textAlign: 'center' },
+  sentenceImage: {
+    width: '100%',
+    height: 200,
+    borderRadius: 12,
+    marginBottom: 16,
+    backgroundColor: '#111',
+  },
   loadingContainer: { alignItems: 'center', justifyContent: 'center', paddingTop: 80, gap: 16 },
   loadingText: { color: '#555', fontSize: 14, letterSpacing: 1 },
   errorContainer: { alignItems: 'center', paddingTop: 80, gap: 12 },
