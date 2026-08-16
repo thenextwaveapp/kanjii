@@ -228,25 +228,69 @@ export default function PracticeScreen({ navigation, route, user }) {
 
   // Auto-play TTS when new sentence loads
   useEffect(() => {
+    console.log('🔍 Auto-play effect running', {
+      hasJapanese: !!sentence?.japanese,
+      loading,
+      done,
+      sentenceId: sentence?.id
+    });
+
     if (sentence?.japanese && !loading && !done) {
+      console.log('✅ Starting auto-play');
       setAutoPlaying(true);
+      let mainTimer;
+      let glowTimer;
+      let safetyTimer;
+      let cancelled = false;
+
+      // Safety timeout to ensure autoPlaying doesn't get stuck
+      safetyTimer = setTimeout(() => {
+        if (!cancelled) {
+          console.log('⚠️ Auto-play safety timeout - clearing autoPlaying');
+          setAutoPlaying(false);
+        }
+      }, 5000); // 5 second max
+
       // Delay to let UI settle and show blue glow
-      const timer = setTimeout(async () => {
+      mainTimer = setTimeout(async () => {
+        if (cancelled) {
+          console.log('⚠️ Auto-play cancelled before starting');
+          return;
+        }
+
+        console.log('🎵 Calling speakJapanese...');
         try {
-          const voiceConfig = VOICE_OPTIONS.find(v => v.value === settings.voiceGender);
+          const voiceConfig = VOICE_OPTIONS.find(v => v.value === settings?.voiceGender);
+          console.log('🔊 Voice config:', voiceConfig);
+
           await speakJapanese(sentence.japanese, {
             voice: voiceConfig?.voice,
-            rate: settings.speechRate,
+            rate: settings?.speechRate,
           });
-        } catch (e) {
-          console.error('Auto-play TTS failed:', e);
-        } finally {
+
+          if (cancelled) {
+            console.log('⚠️ Auto-play cancelled after TTS');
+            return;
+          }
+
+          console.log('✅ speakJapanese succeeded, setting glow timer');
           // Keep glow for a bit after audio starts
-          setTimeout(() => setAutoPlaying(false), 800);
+          glowTimer = setTimeout(() => {
+            console.log('⏰ Clearing autoPlaying after 800ms');
+            setAutoPlaying(false);
+          }, 800);
+        } catch (e) {
+          console.error('❌ Auto-play TTS failed:', e);
+          setAutoPlaying(false);
         }
       }, 450);
+
       return () => {
-        clearTimeout(timer);
+        console.log('🧹 Cleanup running');
+        cancelled = true;
+        if (mainTimer) clearTimeout(mainTimer);
+        if (glowTimer) clearTimeout(glowTimer);
+        if (safetyTimer) clearTimeout(safetyTimer);
         setAutoPlaying(false);
       };
     }
@@ -511,6 +555,7 @@ export default function PracticeScreen({ navigation, route, user }) {
                 sentenceListIds={currentSentenceListIds}
                 onSaveToList={handleSaveToList}
                 autoPlaying={autoPlaying}
+                navigation={navigation}
               />
               <TypingInput
                 target={sentence.japanese}

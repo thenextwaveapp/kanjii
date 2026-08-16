@@ -6,13 +6,10 @@ import {
   TouchableOpacity,
   StyleSheet,
   Keyboard,
-  InputAccessoryView,
   Platform,
   Animated,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
-
-const INPUT_ACCESSORY_ID = 'kanjii-input';
 
 // Calculate similarity between two strings (0-1, where 1 is identical)
 function calculateSimilarity(str1, str2) {
@@ -196,7 +193,6 @@ export default function TypingInput({ target, onMatch, onAttempt, onFocus }) {
             showSoftInputOnFocus={true}
             onFocus={onFocus}
             lang="ja"
-            inputAccessoryViewID={Platform.OS === 'ios' ? INPUT_ACCESSORY_ID : undefined}
           />
 
           {/* Burst animation overlay */}
@@ -229,16 +225,6 @@ export default function TypingInput({ target, onMatch, onAttempt, onFocus }) {
           )}
         </Animated.View>
       </TouchableOpacity>
-
-      {Platform.OS === 'ios' && (
-        <InputAccessoryView nativeID={INPUT_ACCESSORY_ID}>
-          <View style={styles.accessory}>
-            <TouchableOpacity onPress={() => Keyboard.dismiss()} style={styles.accessoryButton}>
-              <Text style={styles.accessoryText}>Done</Text>
-            </TouchableOpacity>
-          </View>
-        </InputAccessoryView>
-      )}
 
       <TouchableOpacity
         style={[styles.button, value.length === 0 && styles.buttonDisabled]}
@@ -326,10 +312,4 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: { backgroundColor: '#222' },
   buttonText: { color: '#fff', fontSize: 15, fontWeight: '600', letterSpacing: 1 },
-  accessory: {
-    backgroundColor: '#1A1A1A', borderTopWidth: 1, borderTopColor: '#2A2A2A',
-    paddingHorizontal: 16, paddingVertical: 10, alignItems: 'flex-end',
-  },
-  accessoryButton: { paddingHorizontal: 12, paddingVertical: 4 },
-  accessoryText: { color: '#E85D3A', fontSize: 16, fontWeight: '600' },
 });

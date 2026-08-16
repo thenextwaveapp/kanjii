@@ -7,6 +7,11 @@ import {
   ActivityIndicator,
   SafeAreaView,
   Linking,
+  Modal,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
+  Alert,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NavigationContainer } from '@react-navigation/native';
@@ -166,6 +171,8 @@ function AppNavigator({ user, initialNavigationState }) {
   const [checkingProfile, setCheckingProfile] = useState(true);
   const [initialRoute, setInitialRoute] = useState('Home');
   const [navState, setNavState] = useState(initialNavigationState);
+  const [showBugModal, setShowBugModal] = useState(false);
+  const [bugReport, setBugReport] = useState('');
 
   useEffect(() => {
     async function checkProfile() {
@@ -198,8 +205,34 @@ function AppNavigator({ user, initialNavigationState }) {
     );
   }
 
+  const handleBugSubmit = async () => {
+    if (!bugReport.trim()) {
+      Alert.alert('Error', 'Please describe the bug');
+      return;
+    }
+
+    try {
+      const { error } = await supabase.from('bug_reports').insert({
+        user_id: user.id,
+        user_email: user.email,
+        description: bugReport,
+        created_at: new Date().toISOString(),
+      });
+
+      if (error) throw error;
+
+      Alert.alert('Thanks!', 'Bug report submitted');
+      setBugReport('');
+      setShowBugModal(false);
+    } catch (err) {
+      console.error('Bug report error:', err);
+      Alert.alert('Error', 'Failed to submit bug report');
+    }
+  };
+
   return (
-    <NavigationContainer
+    <>
+      <NavigationContainer
       initialState={navState}
       onStateChange={(state) => {
         AsyncStorage.setItem(NAVIGATION_STATE_KEY, JSON.stringify(state));
@@ -276,6 +309,68 @@ function AppNavigator({ user, initialNavigationState }) {
           </Stack.Screen>
         </Stack.Navigator>
       </NavigationContainer>
+
+      {/* Floating bug report button */}
+      <TouchableOpacity
+        style={styles.bugButton}
+        onPress={() => setShowBugModal(true)}
+        activeOpacity={0.7}
+      >
+        <Text style={styles.bugEmoji}>🐛</Text>
+      </TouchableOpacity>
+
+      {/* Bug report modal */}
+      <Modal
+        visible={showBugModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowBugModal(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.bugModalOverlay}
+        >
+          <TouchableOpacity
+            style={styles.bugModalBackdrop}
+            activeOpacity={1}
+            onPress={() => setShowBugModal(false)}
+          />
+          <View style={styles.bugModalContent}>
+            <Text style={styles.bugModalTitle}>Report a Bug</Text>
+            <TextInput
+              style={styles.bugInput}
+              placeholder="Describe what happened..."
+              placeholderTextColor="#555"
+              value={bugReport}
+              onChangeText={setBugReport}
+              multiline
+              numberOfLines={6}
+              textAlignVertical="top"
+              autoFocus
+            />
+            <View style={styles.bugModalButtons}>
+              <TouchableOpacity
+                style={[styles.bugModalButton, styles.bugModalButtonCancel]}
+                onPress={() => {
+                  setBugReport('');
+                  setShowBugModal(false);
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.bugModalButtonCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.bugModalButton, styles.bugModalButtonSubmit]}
+                onPress={handleBugSubmit}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.bugModalButtonSubmitText}>Submit</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+    </>
     );
 }
 
@@ -303,4 +398,92 @@ const styles = StyleSheet.create({
   signInButtonDisabled: { opacity: 0.5 },
   signInButtonText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.3 },
   authError: { color: '#E85D3A', fontSize: 12, textAlign: 'center' },
+  bugButton: {
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#1A1A1A',
+    borderWidth: 1,
+    borderColor: '#333',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  bugEmoji: {
+    fontSize: 28,
+  },
+  bugModalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  bugModalBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+  },
+  bugModalContent: {
+    backgroundColor: '#111',
+    borderRadius: 16,
+    padding: 24,
+    width: '85%',
+    maxWidth: 400,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  bugModalTitle: {
+    color: '#EFEFEF',
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 16,
+  },
+  bugInput: {
+    backgroundColor: '#0A0A0A',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#333',
+    padding: 12,
+    color: '#EFEFEF',
+    fontSize: 14,
+    minHeight: 120,
+    marginBottom: 16,
+  },
+  bugModalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  bugModalButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  bugModalButtonCancel: {
+    backgroundColor: '#0A0A0A',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  bugModalButtonCancelText: {
+    color: '#888',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  bugModalButtonSubmit: {
+    backgroundColor: '#E85D3A',
+  },
+  bugModalButtonSubmitText: {
+    color: '#FFF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
 });

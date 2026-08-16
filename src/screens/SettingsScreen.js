@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   ScrollView,
   Switch,
   Alert,
+  Modal,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { TEXT_SCALE_OPTIONS, VOICE_OPTIONS, SPEECH_RATE_OPTIONS } from '../services/settings';
@@ -16,7 +17,7 @@ import { speakJapanese } from '../services/tts';
 import { signOut } from '../services/auth';
 import {
   requestPermissions,
-  scheduleDailyReminder,
+  scheduleDailyReminders,
   scheduleStreakRiskAlert,
   cancelAllNotifications,
   checkNotificationPermissions,
@@ -25,6 +26,9 @@ import {
 export default function SettingsScreen({ navigation, user }) {
   const { settings, updateSetting } = useSettings();
   const [hasPermission, setHasPermission] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(null); // null or reminder index (1, 2, 3)
+  const sliderRef = useRef(null);
+  const voiceTestTimeout = useRef(null);
 
   useEffect(() => {
     checkNotificationPermissions().then(setHasPermission);
@@ -57,7 +61,7 @@ export default function SettingsScreen({ navigation, user }) {
       setHasPermission(true);
 
       // Schedule notifications
-      await scheduleDailyReminder(settings.dailyReminderHour, settings.dailyReminderMinute);
+      await scheduleReminders();
       await scheduleStreakRiskAlert();
       await updateSetting('notificationsEnabled', true);
     } else {
@@ -67,19 +71,49 @@ export default function SettingsScreen({ navigation, user }) {
     }
   };
 
-  const handleTimeChange = async (event, selectedDate) => {
-    if (event.type === 'dismissed') return;
+  const scheduleReminders = async () => {
+    const count = settings.dailyReminderCount || 1;
+    const reminders = [];
+
+    for (let i = 1; i <= count; i++) {
+      reminders.push({
+        hour: settings[`dailyReminder${i}Hour`],
+        minute: settings[`dailyReminder${i}Minute`],
+      });
+    }
+
+    await scheduleDailyReminders(reminders);
+  };
+
+  const handleTimeChange = async (reminderIndex, event, selectedDate) => {
+    if (event.type === 'dismissed') {
+      setShowTimePicker(null);
+      return;
+    }
 
     if (selectedDate) {
       const hour = selectedDate.getHours();
       const minute = selectedDate.getMinutes();
 
-      await updateSetting('dailyReminderHour', hour);
-      await updateSetting('dailyReminderMinute', minute);
+      await updateSetting(`dailyReminder${reminderIndex}Hour`, hour);
+      await updateSetting(`dailyReminder${reminderIndex}Minute`, minute);
 
       if (settings.notificationsEnabled) {
-        await scheduleDailyReminder(hour, minute);
+        await scheduleReminders();
       }
+    }
+  };
+
+  const formatTime = (hour, minute) => {
+    const h = hour.toString().padStart(2, '0');
+    const m = minute.toString().padStart(2, '0');
+    return `${h}:${m}`;
+  };
+
+  const handleReminderCountChange = async (count) => {
+    await updateSetting('dailyReminderCount', count);
+    if (settings.notificationsEnabled) {
+      await scheduleReminders();
     }
   };
 
@@ -122,23 +156,52 @@ export default function SettingsScreen({ navigation, user }) {
 
             <View style={styles.divider} />
 
-            <Text style={styles.compactLabel}>Speed</Text>
-            <View style={styles.speedOptions}>
-              {SPEECH_RATE_OPTIONS.map((option) => (
-                <TouchableOpacity
-                  key={option.value}
-                  style={[styles.speedOption, settings.speechRate === option.value && styles.speedOptionActive]}
-                  onPress={() => {
-                    updateSetting('speechRate', option.value);
-                    testVoice(settings.voiceGender, option.value);
-                  }}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[styles.speedOptionText, settings.speechRate === option.value && styles.speedOptionTextActive]}>
-                    {option.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+            <Text style={styles.compactLabel}>
+              Speed {settings.speechRate.toFixed(2)}x
+            </Text>
+            <View
+              ref={sliderRef}
+              style={styles.sliderContainer}
+              onStartShouldSetResponder={() => true}
+              onResponderGrant={(e) => {
+                sliderRef.current?.measure((x, y, width, height, pageX, pageY) => {
+                  const touchX = e.nativeEvent.pageX - pageX;
+                  const percentage = Math.max(0, Math.min(1, touchX / width));
+                  const value = 0.5 + percentage * 1.0; // 0.5 to 1.5
+                  updateSetting('speechRate', value);
+                });
+              }}
+              onResponderMove={(e) => {
+                sliderRef.current?.measure((x, y, width, height, pageX, pageY) => {
+                  const touchX = e.nativeEvent.pageX - pageX;
+                  const percentage = Math.max(0, Math.min(1, touchX / width));
+                  const value = 0.5 + percentage * 1.0; // 0.5 to 1.5
+                  updateSetting('speechRate', value);
+
+                  // Debounce voice test
+                  if (voiceTestTimeout.current) {
+                    clearTimeout(voiceTestTimeout.current);
+                  }
+                  voiceTestTimeout.current = setTimeout(() => {
+                    testVoice(settings.voiceGender, value);
+                  }, 500);
+                });
+              }}
+            >
+              <View style={styles.sliderTrack}>
+                <View
+                  style={[
+                    styles.sliderFill,
+                    { width: `${((settings.speechRate - 0.5) / 1.0) * 100}%` }
+                  ]}
+                />
+              </View>
+              <View
+                style={[
+                  styles.sliderThumb,
+                  { left: `${((settings.speechRate - 0.5) / 1.0) * 100}%` }
+                ]}
+              />
             </View>
           </View>
         </View>
@@ -197,22 +260,52 @@ export default function SettingsScreen({ navigation, user }) {
             {settings.notificationsEnabled && (
               <>
                 <View style={styles.divider} />
-                <Text style={styles.compactLabel}>Reminder Time</Text>
-                <View style={styles.timePickerContainer}>
-                  <DateTimePicker
-                    value={(() => {
-                      const date = new Date();
-                      date.setHours(settings.dailyReminderHour);
-                      date.setMinutes(settings.dailyReminderMinute);
-                      return date;
-                    })()}
-                    mode="time"
-                    is24Hour={true}
-                    display="spinner"
-                    onChange={handleTimeChange}
-                    textColor="#EFEFEF"
-                  />
+                <Text style={styles.compactLabel}>Daily Reminders</Text>
+                <View style={styles.reminderCountOptions}>
+                  {[1, 2, 3].map((count) => (
+                    <TouchableOpacity
+                      key={count}
+                      style={[
+                        styles.reminderCountOption,
+                        settings.dailyReminderCount === count && styles.reminderCountOptionActive,
+                      ]}
+                      onPress={() => handleReminderCountChange(count)}
+                      activeOpacity={0.7}
+                    >
+                      <Text
+                        style={[
+                          styles.reminderCountText,
+                          settings.dailyReminderCount === count && styles.reminderCountTextActive,
+                        ]}
+                      >
+                        {count}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
                 </View>
+
+                <View style={styles.divider} />
+                <View style={styles.timesList}>
+                  {Array.from({ length: settings.dailyReminderCount || 1 }, (_, i) => i + 1).map((index) => (
+                    <TouchableOpacity
+                      key={index}
+                      style={styles.timeItem}
+                      onPress={() => setShowTimePicker(index)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.timeLabel}>
+                        {settings.dailyReminderCount > 1 ? `${index}.` : 'Time'}
+                      </Text>
+                      <Text style={styles.timeValue}>
+                        {formatTime(
+                          settings[`dailyReminder${index}Hour`] || 19,
+                          settings[`dailyReminder${index}Minute`] || 0
+                        )}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
                 <Text style={styles.notificationHint}>
                   Streak risk alerts sent at 22:00 if you haven't practiced
                 </Text>
@@ -272,6 +365,49 @@ export default function SettingsScreen({ navigation, user }) {
           </View>
         </View>
       </ScrollView>
+
+      {/* Time Picker Modal */}
+      <Modal
+        visible={showTimePicker !== null}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowTimePicker(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            style={styles.modalBackdrop}
+            activeOpacity={1}
+            onPress={() => setShowTimePicker(null)}
+          />
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                {settings.dailyReminderCount > 1
+                  ? `Reminder ${showTimePicker}`
+                  : 'Reminder Time'}
+              </Text>
+              <TouchableOpacity onPress={() => setShowTimePicker(null)}>
+                <Text style={styles.modalDone}>Done</Text>
+              </TouchableOpacity>
+            </View>
+            {showTimePicker && (
+              <DateTimePicker
+                value={(() => {
+                  const date = new Date();
+                  date.setHours(settings[`dailyReminder${showTimePicker}Hour`] || 19);
+                  date.setMinutes(settings[`dailyReminder${showTimePicker}Minute`] || 0);
+                  return date;
+                })()}
+                mode="time"
+                is24Hour={true}
+                display="spinner"
+                onChange={(event, selectedDate) => handleTimeChange(showTimePicker, event, selectedDate)}
+                textColor="#EFEFEF"
+              />
+            )}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -446,6 +582,33 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontStyle: 'italic',
   },
+  reminderCountOptions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  reminderCountOption: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 8,
+    marginHorizontal: 2,
+    backgroundColor: '#0A0A0A',
+    borderWidth: 1,
+    borderColor: '#222',
+  },
+  reminderCountOptionActive: {
+    backgroundColor: '#E85D3A',
+    borderColor: '#E85D3A',
+  },
+  reminderCountText: {
+    color: '#666',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  reminderCountTextActive: {
+    color: '#FFF',
+  },
   sectionTitle: {
     color: '#555',
     fontSize: 11,
@@ -476,5 +639,95 @@ const styles = StyleSheet.create({
     color: '#E85D3A',
     fontSize: 15,
     fontWeight: '600',
+  },
+  timesList: {
+    gap: 8,
+    marginBottom: 12,
+  },
+  timeItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#0A0A0A',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#222',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  timeLabel: {
+    color: '#AAA',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  timeValue: {
+    color: '#E85D3A',
+    fontSize: 15,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  modalBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+  },
+  modalContent: {
+    backgroundColor: '#111',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderWidth: 1,
+    borderColor: '#1A1A1A',
+    paddingBottom: 40,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1A1A1A',
+  },
+  modalTitle: {
+    color: '#EFEFEF',
+    fontSize: 17,
+    fontWeight: '600',
+  },
+  modalDone: {
+    color: '#E85D3A',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  sliderContainer: {
+    height: 40,
+    width: '100%',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  sliderTrack: {
+    height: 4,
+    backgroundColor: '#333',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  sliderFill: {
+    height: '100%',
+    backgroundColor: '#E85D3A',
+  },
+  sliderThumb: {
+    position: 'absolute',
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#E85D3A',
+    marginLeft: -10,
+    top: 10,
   },
 });

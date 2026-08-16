@@ -12,17 +12,10 @@ import { speakJapanese, stopSpeaking } from '../services/tts';
 import { useSettings } from '../contexts/SettingsContext';
 import { VOICE_OPTIONS } from '../services/settings';
 
-function toIMERomaji(kana) {
-  // Use wanakana's standard IME-compatible romanization
-  // This matches what users would actually type on a Japanese keyboard
-  return toRomaji(kana);
-}
-
-export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [], onSaveToList, sentenceListIds = [], autoPlaying = false }) {
+export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [], onSaveToList, sentenceListIds = [], autoPlaying = false, navigation }) {
   const { settings } = useSettings();
   const [revealed, setRevealed] = useState({});
   const [speaking, setSpeaking] = useState(false);
-  const [showRomaji, setShowRomaji] = useState(false);
   const [showTranslation, setShowTranslation] = useState(false);
   const [currentSound, setCurrentSound] = useState(null);
   const [showSaveModal, setShowSaveModal] = useState(false);
@@ -55,11 +48,22 @@ export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [],
 
   const speak = async () => {
     if (speaking && currentSound) {
-      await stopSpeaking(currentSound);
+      try {
+        await stopSpeaking(currentSound);
+      } catch (e) {
+        console.log('Error stopping sound:', e);
+      }
       setCurrentSound(null);
       setSpeaking(false);
       return;
     }
+
+    // Safety timeout to prevent stuck state
+    const safetyTimeout = setTimeout(() => {
+      console.log('⚠️ Manual TTS safety timeout - clearing speaking state');
+      setSpeaking(false);
+      setCurrentSound(null);
+    }, 8000); // 8 seconds max
 
     try {
       setSpeaking(true);
@@ -69,6 +73,7 @@ export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [],
         rate: settings.speechRate,
       });
 
+      clearTimeout(safetyTimeout);
       setCurrentSound(sound);
 
       sound.setOnPlaybackStatusUpdate((status) => {
@@ -79,6 +84,7 @@ export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [],
       });
     } catch (error) {
       console.error('Speech error:', error);
+      clearTimeout(safetyTimeout);
       setSpeaking(false);
       setCurrentSound(null);
     }
@@ -94,17 +100,6 @@ export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [],
   console.log('WordMap:', wordMap);
   console.log('Japanese text:', japanese);
 
-  // Build romaji: convert each word segment to romaji and join with spaces
-  const romaji = tokenise(japanese, wordMap)
-    .map((seg) => {
-      const reading = wordMap[seg.text]?.furigana ?? seg.text;
-      return toIMERomaji(reading);
-    })
-    .join(' ')  // Add spaces between words
-    .replace(/\s+([。、！？.,!?])/g, '$1')  // Remove space before punctuation
-    .trim()
-    .replace(/^./, (c) => c.toUpperCase());
-
   // Split japanese text into tappable segments
   // We try to match known words, falling back to character-by-character
   const segments = tokenise(japanese, wordMap);
@@ -114,6 +109,12 @@ export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [],
     console.log('Tapped word:', word);
     console.log('Word info:', wordMap[word]);
     setRevealed((prev) => ({ ...prev, [word]: !prev[word] }));
+  };
+
+  const handleKanjiTap = (kanji) => {
+    if (navigation) {
+      navigation.navigate('KanjiDetail', { kanji });
+    }
   };
 
   return (
@@ -161,17 +162,6 @@ export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [],
 
       {/* Bottom right buttons */}
       <View style={styles.topRightButtons}>
-        {/* ro/en toggle - shows when translation is visible */}
-        {showTranslation && (
-          <TouchableOpacity
-            style={styles.iconButton}
-            onPress={() => setShowRomaji((v) => !v)}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.roEnToggleText}>{showRomaji ? 'EN' : 'RO'}</Text>
-          </TouchableOpacity>
-        )}
-
         <TouchableOpacity
           style={[styles.iconButton, showTranslation && styles.iconButtonActive]}
           onPress={() => setShowTranslation((v) => !v)}
@@ -225,11 +215,11 @@ export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [],
         {/* Practice Stats */}
         {best_grade && practice_count && (
           <View style={styles.statsHeader}>
-            <Text style={styles.statsText}>
+            <Text style={[styles.statsText, { fontSize: 13 * settings.textScale }]}>
               {best_grade} {practice_count}x
             </Text>
             {last_practiced_at && (
-              <Text style={styles.lastPracticedText}>
+              <Text style={[styles.lastPracticedText, { fontSize: 11 * settings.textScale }]}>
                 {formatLastPracticed(last_practiced_at)}
               </Text>
             )}
@@ -255,13 +245,16 @@ export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [],
             >
               {/* Furigana */}
               {isRevealed && isTappable && (
-                <Text style={styles.furiganaAligned}>{info.furigana}</Text>
+                <Text style={[styles.furiganaAligned, { fontSize: 11 * settings.textScale }]}>
+                  {info.furigana}
+                </Text>
               )}
 
               {/* Japanese word */}
               <Text style={[
                 isTappable ? styles.kanjiText : styles.plainText,
-                isRevealed && isTappable && styles.kanjiHighlighted
+                isRevealed && isTappable && styles.kanjiHighlighted,
+                { fontSize: 26 * settings.textScale }
               ]}>
                 {seg.text}
               </Text>
@@ -270,16 +263,53 @@ export default function SnippetCard({ snippet, onViewDetail, sentenceLists = [],
         })}
       </View>
 
-      {/* Full sentence translation */}
+      {/* Word breakdown translation */}
       {showTranslation && (
         <>
           <View style={styles.divider} />
           <View style={styles.translationContainer}>
-            {showRomaji ? (
-              <Text style={styles.romajiText}>{romaji}</Text>
-            ) : (
-              <Text style={styles.englishText}>{english}</Text>
-            )}
+            {/* Word cards */}
+            <View style={styles.wordCardsGrid}>
+              {(words || []).map((word, index) => {
+                const firstKanji = word.word?.match(/[\u4E00-\u9FFF\u3400-\u4DBF]/)?.[0];
+                const reading = word.furigana || word.word;
+                const wordRomaji = toRomaji(reading);
+
+                return (
+                  <TouchableOpacity
+                    key={`${word.word}-${index}`}
+                    onPress={() => firstKanji && handleKanjiTap(firstKanji)}
+                    disabled={!firstKanji}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.wordCard}>
+                      <Text style={[styles.wordText, { fontSize: 22 * settings.textScale }]}>
+                        {word.word}
+                      </Text>
+                      {word.furigana && (
+                        <Text style={[styles.wordFurigana, { fontSize: 12 * settings.textScale }]}>
+                          {word.furigana}
+                        </Text>
+                      )}
+                      {wordRomaji && (
+                        <Text style={[styles.wordRomaji, { fontSize: 10 * settings.textScale }]}>
+                          {wordRomaji}
+                        </Text>
+                      )}
+                      {word.meaning && (
+                        <Text style={[styles.wordMeaning, { fontSize: 11 * settings.textScale }]}>
+                          {word.meaning}
+                        </Text>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            {/* English translation */}
+            <Text style={[styles.englishText, { fontSize: 15 * settings.textScale, lineHeight: 22 * settings.textScale }]}>
+              {english}
+            </Text>
           </View>
         </>
       )}
@@ -374,12 +404,6 @@ const styles = StyleSheet.create({
     right: 8,
     flexDirection: 'row',
     gap: 6,
-  },
-  roEnToggleText: {
-    fontSize: 10,
-    color: '#E85D3A',
-    fontWeight: '700',
-    letterSpacing: 0.5,
   },
   topRightButtons: {
     position: 'absolute',
@@ -492,14 +516,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontStyle: 'italic',
   },
-  romajiAligned: {
-    fontSize: 11,
-    color: '#E85D3A',
-    letterSpacing: 0.3,
-    textAlign: 'center',
-  },
 
-  // Full sentence translation
+  // Word breakdown translation
   divider: {
     height: 1,
     backgroundColor: '#222222',
@@ -507,18 +525,49 @@ const styles = StyleSheet.create({
   },
   translationContainer: {
     paddingBottom: 20,
+    gap: 16,
+  },
+  wordCardsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  wordCard: {
+    backgroundColor: '#111',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#222',
+    padding: 14,
+    minWidth: 100,
+    gap: 4,
+  },
+  wordText: {
+    color: '#EFEFEF',
+    fontSize: 22,
+    fontWeight: '400',
+  },
+  wordFurigana: {
+    color: '#E85D3A',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  wordRomaji: {
+    color: '#666',
+    fontSize: 10,
+    fontStyle: 'italic',
+  },
+  wordMeaning: {
+    color: '#888',
+    fontSize: 11,
+    marginTop: 2,
   },
   englishText: {
     fontSize: 15,
     color: '#888888',
     lineHeight: 22,
     fontStyle: 'italic',
-  },
-  romajiText: {
-    fontSize: 15,
-    color: '#E85D3A',
-    lineHeight: 22,
-    letterSpacing: 0.3,
+    textAlign: 'center',
   },
 
   // Save modal

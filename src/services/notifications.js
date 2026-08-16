@@ -35,32 +35,42 @@ export async function requestPermissions() {
   return true;
 }
 
-export async function scheduleDailyReminder(hour = 19, minute = 0) {
+export async function scheduleDailyReminders(reminders = []) {
   try {
-    // Cancel existing daily reminder
-    await cancelNotificationsByTag('daily-reminder');
+    // Cancel existing daily reminders
+    await cancelNotificationsByTag('daily-reminder-1');
+    await cancelNotificationsByTag('daily-reminder-2');
+    await cancelNotificationsByTag('daily-reminder-3');
 
-    // Schedule new daily reminder
-    await Notifications.scheduleNotificationAsync({
-      identifier: 'daily-reminder',
-      content: {
-        title: '📚 Time to practice Japanese!',
-        body: 'Keep your streak going with a quick practice session.',
-        data: { type: 'daily-reminder' },
-      },
-      trigger: {
-        type: 'daily',
-        hour,
-        minute,
-        repeats: true,
-      },
-    });
+    // Schedule new reminders
+    for (let i = 0; i < reminders.length; i++) {
+      const { hour, minute } = reminders[i];
+      await Notifications.scheduleNotificationAsync({
+        identifier: `daily-reminder-${i + 1}`,
+        content: {
+          title: '📚 Time to practice Japanese!',
+          body: 'Keep your streak going with a quick practice session.',
+          data: { type: `daily-reminder-${i + 1}` },
+        },
+        trigger: {
+          type: 'daily',
+          hour,
+          minute,
+          repeats: true,
+        },
+      });
+    }
 
     return true;
   } catch (error) {
-    console.error('Failed to schedule daily reminder:', error);
+    console.error('Failed to schedule daily reminders:', error);
     return false;
   }
+}
+
+// Deprecated: kept for backward compatibility
+export async function scheduleDailyReminder(hour = 19, minute = 0) {
+  return scheduleDailyReminders([{ hour, minute }]);
 }
 
 export async function scheduleStreakRiskAlert() {

@@ -191,7 +191,6 @@ export default function HomeScreen({ navigation, user }) {
                 <TouchableOpacity
                   style={styles.modeOption}
                   onPress={() => {
-                    setIsFlipped(false);
                     navigation.navigate('CollectionList');
                   }}
                   activeOpacity={0.85}
@@ -205,7 +204,6 @@ export default function HomeScreen({ navigation, user }) {
                 <TouchableOpacity
                   style={styles.modeOption}
                   onPress={() => {
-                    setIsFlipped(false);
                     navigation.navigate('RoundSelect', { user });
                   }}
                   activeOpacity={0.85}
@@ -219,7 +217,6 @@ export default function HomeScreen({ navigation, user }) {
                 <TouchableOpacity
                   style={styles.modeOption}
                   onPress={() => {
-                    setIsFlipped(false);
                     handleQuickPlay();
                   }}
                   activeOpacity={0.85}
